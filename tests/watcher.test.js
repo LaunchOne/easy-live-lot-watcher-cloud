@@ -69,3 +69,38 @@ test("an expired timed deadline needs two matching checks before monitoring comp
   const second = f.watcher.confirmTerminalLots({ mode: "timed", lots: [{ lot: "10", deadlineMs: 900000, ended: true, confirmedEnded: false }] }, first);
   assert.equal(f.watcher.isComplete(auction, second), true);
 });
+
+test("live monitoring completes after every watched lot has passed", () => {
+  const f = fixture();
+  const auction = { mode: "live", lots: [{ lot: "10" }, { lot: "12" }] };
+  assert.equal(f.watcher.isComplete(auction, { mode: "live", currentLot: "13", order: ["10", "11", "12", "13"] }), true);
+  assert.equal(f.watcher.isComplete(auction, { mode: "live", currentLot: "11", order: ["10", "11", "12", "13"] }), false);
+});
+
+test("terminal lots are removed without removing future timed lots", () => {
+  const f = fixture();
+  const auction = {
+    auctionKey: "a", mode: "timed", updatedAt: 123,
+    lots: [{ lot: "10" }, { lot: "20" }]
+  };
+  f.state.auctions.a = auction;
+  f.state.runtime.a = {};
+  f.state.alerts["a::10::180"] = { status: "sent" };
+  const removed = f.watcher.retireTerminalLots(f.state, auction, new Set(["10"]), { auctionEnded: false });
+  assert.equal(removed, false);
+  assert.deepEqual(f.state.auctions.a.lots, [{ lot: "20" }]);
+  assert.equal(f.state.alerts["a::10::180"], undefined);
+  assert.equal(f.state.completedLots.a["10"].configUpdatedAt, 123);
+});
+
+test("a completed auction is removed from active cloud counts", () => {
+  const f = fixture();
+  const auction = { auctionKey: "a", mode: "live", updatedAt: 456, lots: [{ lot: "10" }] };
+  f.state.auctions.a = auction;
+  f.state.runtime.a = {};
+  const removed = f.watcher.retireTerminalLots(f.state, auction, new Set(["10"]), { auctionEnded: false });
+  assert.equal(removed, true);
+  assert.equal(f.state.auctions.a, undefined);
+  assert.equal(f.state.runtime.a, undefined);
+  assert.equal(f.state.completedAuctions.a.configUpdatedAt, 456);
+});

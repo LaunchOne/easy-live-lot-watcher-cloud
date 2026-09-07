@@ -10,6 +10,8 @@ export function emptyState() {
     runtime: {},
     alerts: {},
     incidents: {},
+    completedAuctions: {},
+    completedLots: {},
     events: []
   };
 }

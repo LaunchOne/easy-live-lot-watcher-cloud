@@ -22,7 +22,7 @@ const requiredFiles = [
 ];
 
 assert.equal(manifest.manifest_version, 3);
-assert.equal(manifest.version, "0.6.0");
+assert.equal(manifest.version, "0.6.1");
 assert.ok(manifest.permissions.includes("alarms"));
 assert.ok(manifest.permissions.includes("power"));
 assert.ok(manifest.optional_host_permissions.includes("https://*/*"));

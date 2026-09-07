@@ -61,6 +61,7 @@ export class Watcher {
         ? await this.monitor.timedAuction(auction)
         : await this.monitor.liveAuction(auction);
       const snapshot = this.confirmTerminalLots(rawSnapshot, previous);
+      const terminalLots = this.terminalLots(auction, snapshot);
       await this.store.mutate(async (state) => {
         state.runtime[auction.auctionKey] = {
           ...snapshot,
@@ -69,12 +70,12 @@ export class Watcher {
           lastSuccessAt: this.now(),
           error: "",
           configUpdatedAt: auction.updatedAt,
-          monitoringComplete: this.isComplete(auction, snapshot)
+          monitoringComplete: Boolean(snapshot.auctionEnded || terminalLots.size === auction.lots.length)
         };
         await this.recoverIncident(state, auction);
         await this.evaluateAlerts(state, auction, snapshot);
-        if (state.runtime[auction.auctionKey].monitoringComplete) {
-          this.store.event("monitoring-complete", { auctionKey: auction.auctionKey, label: auction.label });
+        const auctionRemoved = this.retireTerminalLots(state, auction, terminalLots, snapshot);
+        if (auctionRemoved) {
           await this.monitor.closeAuction(auction.auctionKey);
           await this.monitor.closeAuction(`${auction.auctionKey}:catalogue`);
           await this.monitor.closeAuction(`${auction.auctionKey}:live`);
@@ -87,8 +88,60 @@ export class Watcher {
 
   isComplete(auction, snapshot) {
     if (snapshot.auctionEnded) return true;
-    if (auction.mode !== "timed" || !snapshot.lots?.length) return false;
-    return snapshot.lots.every((lot) => lot.confirmedEnded || Number(lot.expiredChecks || 0) >= 2);
+    const trackedCount = auction.lots?.length || snapshot.lots?.length || 0;
+    return Boolean(trackedCount && this.terminalLots(auction, snapshot).size === trackedCount);
+  }
+
+  terminalLots(auction, snapshot) {
+    if (snapshot.auctionEnded) return new Set((auction.lots || []).map((lot) => lot.lot));
+    if (auction.mode === "timed") {
+      return new Set((snapshot.lots || [])
+        .filter((lot) => lot.confirmedEnded || Number(lot.expiredChecks || 0) >= 2)
+        .map((lot) => lot.lot));
+    }
+    if (!snapshot.currentLot) return new Set();
+    return new Set((auction.lots || []).filter((watched) => {
+      const remaining = liveDistance(snapshot.currentLot, watched.lot, snapshot.order);
+      return Number.isFinite(remaining) && remaining < 0;
+    }).map((watched) => watched.lot));
+  }
+
+  retireTerminalLots(state, auction, terminalLots, snapshot) {
+    if (!terminalLots.size) return false;
+    state.completedLots ||= {};
+    state.completedLots[auction.auctionKey] ||= {};
+    for (const lot of terminalLots) {
+      state.completedLots[auction.auctionKey][lot] = {
+        completedAt: this.now(),
+        configUpdatedAt: auction.updatedAt,
+        mode: auction.mode
+      };
+      for (const key of Object.keys(state.alerts)) {
+        if (key.startsWith(`${auction.auctionKey}::${lot}::`)) delete state.alerts[key];
+      }
+    }
+    const storedAuction = state.auctions[auction.auctionKey];
+    if (storedAuction) storedAuction.lots = storedAuction.lots.filter((lot) => !terminalLots.has(lot.lot));
+    const auctionRemoved = Boolean(snapshot.auctionEnded || !storedAuction?.lots?.length);
+    if (auctionRemoved) {
+      state.completedAuctions ||= {};
+      state.completedAuctions[auction.auctionKey] = {
+        completedAt: this.now(),
+        configUpdatedAt: auction.updatedAt,
+        mode: auction.mode
+      };
+      delete state.auctions[auction.auctionKey];
+      delete state.runtime[auction.auctionKey];
+      delete state.incidents[auction.auctionKey];
+      this.store.event("monitoring-complete", { auctionKey: auction.auctionKey, label: auction.label });
+    } else {
+      this.store.event("completed-lots-removed", {
+        auctionKey: auction.auctionKey,
+        lots: Array.from(terminalLots),
+        remainingLots: storedAuction.lots.length
+      });
+    }
+    return auctionRemoved;
   }
 
   confirmTerminalLots(snapshot, previous) {

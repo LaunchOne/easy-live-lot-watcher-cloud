@@ -17,6 +17,7 @@ const pushover = new Pushover({
 const monitor = new BrowserMonitor({ navigationTimeoutMs: config.navigationTimeoutMs });
 const watcher = new Watcher({ store, monitor, pushover, pollIntervalMs: config.pollIntervalMs });
 const missingConfiguration = validateProductionConfig();
+const COMPLETION_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 function json(response, status, body) {
   response.writeHead(status, {
@@ -59,7 +60,7 @@ function publicHealth() {
   return {
     ok: missingConfiguration.length === 0 && healthyLoop,
     service: "easy-live-lot-watcher-cloud",
-    version: "1.0.1",
+    version: "1.0.2",
     configured: missingConfiguration.length === 0,
     watcher: loop,
     auctionCount: auctions.length,
@@ -80,6 +81,8 @@ function privateStatus() {
     syncedAt: store.state.syncedAt,
     runtime: store.state.runtime,
     incidents: store.state.incidents,
+    completedAuctions: store.state.completedAuctions,
+    completedLots: store.state.completedLots,
     events: store.state.events.slice(0, 50),
     pushoverConfigured: pushover.configured
   };
@@ -97,12 +100,41 @@ const server = createServer(async (request, response) => {
     if (request.method === "PUT" && url.pathname === "/api/sync") {
       const input = await body(request);
       if (!Array.isArray(input.auctions)) throw new Error("auctions must be an array.");
-      const auctions = Object.fromEntries(input.auctions.map((item) => {
+      const incoming = input.auctions.map((item) => {
         const auction = sanitizeAuction(item, config.allowedHosts);
         if (!auction.auctionKey) throw new Error("Every auction requires an auctionKey.");
-        return [auction.auctionKey, auction];
-      }));
+        return auction;
+      });
       await store.mutate((state) => {
+        const now = Date.now();
+        state.completedAuctions ||= {};
+        state.completedLots ||= {};
+        for (const [key, completed] of Object.entries(state.completedAuctions)) {
+          if (now - Number(completed.completedAt || 0) > COMPLETION_RETENTION_MS) delete state.completedAuctions[key];
+        }
+        for (const [key, lots] of Object.entries(state.completedLots)) {
+          for (const [lot, completed] of Object.entries(lots || {})) {
+            if (now - Number(completed.completedAt || 0) > COMPLETION_RETENTION_MS) delete state.completedLots[key][lot];
+          }
+          if (!Object.keys(state.completedLots[key] || {}).length) delete state.completedLots[key];
+        }
+
+        const auctions = {};
+        for (const auction of incoming) {
+          const completedAuction = state.completedAuctions[auction.auctionKey];
+          if (completedAuction && auction.updatedAt <= Number(completedAuction.configUpdatedAt || 0)) continue;
+          if (completedAuction) delete state.completedAuctions[auction.auctionKey];
+          const completedLots = state.completedLots[auction.auctionKey] || {};
+          const lots = auction.lots.filter((lot) => {
+            const completed = completedLots[lot.lot];
+            if (!completed) return true;
+            if (auction.updatedAt <= Number(completed.configUpdatedAt || 0)) return false;
+            delete completedLots[lot.lot];
+            return true;
+          });
+          if (!Object.keys(completedLots).length) delete state.completedLots[auction.auctionKey];
+          if (lots.length) auctions[auction.auctionKey] = { ...auction, lots };
+        }
         const removed = Object.keys(state.auctions).filter((key) => !auctions[key]);
         state.auctions = auctions;
         state.syncedAt = Date.now();
@@ -114,7 +146,12 @@ const server = createServer(async (request, response) => {
         store.event("extension-synced", { auctionCount: Object.keys(auctions).length, removedCount: removed.length });
       });
       watcher.run().catch((error) => console.error("Post-sync check failed", error));
-      return json(response, 200, { ok: true, revision: store.state.revision, auctionCount: Object.keys(auctions).length });
+      return json(response, 200, {
+        ok: true,
+        revision: store.state.revision,
+        auctionCount: Object.keys(store.state.auctions).length,
+        watchedLotCount: Object.values(store.state.auctions).reduce((total, auction) => total + auction.lots.length, 0)
+      });
     }
 
     if (request.method === "POST" && url.pathname === "/api/test") {

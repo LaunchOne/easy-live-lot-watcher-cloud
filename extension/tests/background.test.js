@@ -69,7 +69,7 @@ function loadBackground() {
     navigator: { userAgent: "Test Chrome on macOS", language: "en-GB" },
     fetch: async () => ({})
   });
-  vm.runInContext(`${source}\n;globalThis.__test = { syncTimedSchedules, handleTimedAlarm, timedAlarmName, handleThresholdReached, liveStageKey, refreshReliabilityState, migrateMisclassifiedLiveConfig, importAccountWatches, readinessSummary, saveTimedLots, recordDiagnostic, buildIssueReport, checkHealth, buildCloudPayload };`, context);
+  vm.runInContext(`${source}\n;globalThis.__test = { syncTimedSchedules, handleTimedAlarm, timedAlarmName, handleThresholdReached, liveStageKey, refreshReliabilityState, migrateMisclassifiedLiveConfig, importAccountWatches, readinessSummary, saveTimedLots, recordDiagnostic, buildIssueReport, checkHealth, buildCloudPayload, pruneCompletedWatches, applyCloudCompletions };`, context);
   return { state, alarms, notifications, tabUpdates, powerEvents, api: context.__test };
 }
 
@@ -644,4 +644,54 @@ test("cloud synchronization includes public watch data but no Pushover credentia
   assert.match(text, /Public lot/);
   assert.match(text, /\"stagesSeconds\":\[180,30\]/);
   assert.doesNotMatch(text, /private-user-key|private-app-token|private-cloud-key/);
+});
+
+test("completed live and timed watches are pruned while future lots remain", async () => {
+  const harness = loadBackground();
+  const liveKey = "https://auctions.example.com::LIVE";
+  const timedKey = "https://auctions.example.com::timed::TIMED";
+  harness.state.auctionConfigs = {
+    [liveKey]: { mode: "live", lots: ["10", "20"], lotOptions: {}, url: "https://auctions.example.com/bid-live/LIVE/sale/" }
+  };
+  harness.state.timedAuctionConfigs = {
+    [timedKey]: { mode: "timed", lots: ["30", "40", "50"], lotOptions: {}, url: "https://auctions.example.com/catalogue/TIMED/DAY/sale/" }
+  };
+  harness.state.auctionRuntime = {
+    [liveKey]: { mode: "live", watched: [{ targetLot: "10", state: "passed" }, { targetLot: "20", state: "upcoming" }] },
+    [timedKey]: { mode: "timed", watched: [
+      { targetLot: "30", state: "ended", confirmedEnded: true },
+      { targetLot: "40", state: "ended", expiredChecks: 1 },
+      { targetLot: "50", state: "not-started" }
+    ] }
+  };
+
+  const result = await harness.api.pruneCompletedWatches();
+  assert.equal(result.changed, true);
+  assert.deepEqual(Array.from(harness.state.auctionConfigs[liveKey].lots), ["20"]);
+  assert.deepEqual(Array.from(harness.state.timedAuctionConfigs[timedKey].lots), ["40", "50"]);
+});
+
+test("cloud completion tombstones remove local watches before the next payload", async () => {
+  const harness = loadBackground();
+  const key = "https://auctions.example.com::LIVE";
+  harness.state.auctionConfigs = {
+    [key]: { mode: "live", lots: ["10"], lotOptions: {}, url: "https://auctions.example.com/bid-live/LIVE/sale/" }
+  };
+  await harness.api.applyCloudCompletions({
+    completedLots: { [key]: { "10": { completedAt: Date.now() } } }
+  });
+  assert.equal(harness.state.auctionConfigs[key], undefined);
+});
+
+test("a newly added future lot survives an older completed runtime snapshot", async () => {
+  const harness = loadBackground();
+  const key = "https://auctions.example.com::timed::TIMED";
+  harness.state.timedAuctionConfigs = {
+    [key]: { mode: "timed", lots: ["10", "20"], lotOptions: {}, url: "https://auctions.example.com/catalogue/TIMED/DAY/sale/" }
+  };
+  harness.state.auctionRuntime = {
+    [key]: { mode: "timed", monitoringComplete: true, watched: [{ targetLot: "10", state: "ended", confirmedEnded: true }] }
+  };
+  await harness.api.pruneCompletedWatches();
+  assert.deepEqual(Array.from(harness.state.timedAuctionConfigs[key].lots), ["20"]);
 });
