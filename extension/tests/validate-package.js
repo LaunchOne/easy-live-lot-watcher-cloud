@@ -22,7 +22,7 @@ const requiredFiles = [
 ];
 
 assert.equal(manifest.manifest_version, 3);
-assert.equal(manifest.version, "0.6.1");
+assert.equal(manifest.version, "0.7.0");
 assert.ok(manifest.permissions.includes("alarms"));
 assert.ok(manifest.permissions.includes("power"));
 assert.ok(manifest.optional_host_permissions.includes("https://*/*"));
@@ -37,8 +37,13 @@ const popupHtml = fs.readFileSync(path.join(root, "popup.html"), "utf8");
 const optionsHtml = fs.readFileSync(path.join(root, "options.html"), "utf8");
 assert.match(popupHtml, /id="readinessIndicator"/);
 assert.match(popupHtml, /id="createIssueReport"/);
+assert.match(popupHtml, /id="refreshCloud"/);
+assert.match(popupHtml, /id="reconciliationDisclosure"/);
+assert.match(popupHtml, /id="cloudAuditDisclosure"/);
 assert.match(optionsHtml, /id="accountWatchImportEnabled"/);
 assert.match(optionsHtml, /id="cloudEnabled"/);
 assert.match(optionsHtml, /id="testCloud"/);
+assert.match(optionsHtml, /id="exportBackup"/);
+assert.match(optionsHtml, /id="backupFile"/);
 
 console.log(`Validated manifest and ${new Set(requiredFiles).size} packaged files.`);

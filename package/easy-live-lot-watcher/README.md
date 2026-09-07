@@ -1,8 +1,10 @@
-# Easy Live Lot Watcher — version 0.6.0
+# Easy Live Lot Watcher — version 0.7.0
 
 A personal Chrome extension for live and timed auctions powered by Easy Live Auction. It supports local desktop monitoring and an optional always-on Railway companion for Pushover alerts when the computer is closed.
 
-Version 0.6.1 adds Railway cloud monitoring and active-watch cleanup. The extension synchronizes only public auction URLs, active watched lot numbers, alert stages and public lot descriptions. Railway never receives auction-house passwords, cookies, payment information or bidding access. Confirmed-ended timed lots, passed live lots, completed auctions and empty stale records are removed automatically; future and temporarily unavailable auctions are retained. When cloud mode is connected, Railway owns Pushover delivery and Chrome retains local desktop alerts, avoiding duplicate phone notifications. Local tab-disconnection warnings are suppressed because closing the computer is expected; cloud lookup failures use a strict two-notification limit: one initial warning and one reminder after 10 minutes, then silence until monitoring has been healthy continuously for 10 minutes.
+Version 0.7.0 adds a Railway status strip with the last cloud update time and a manual refresh button, exact local-versus-cloud watch reconciliation per auction, and a cloud alert log showing when Railway triggered an alert and whether Pushover accepted it. Railway v1.1.0 also performs an automatic live-feed check shortly before a scheduled webcast and sends one readiness warning if the feed has not appeared. Settings now include a portable backup and merge-restore workflow for watch lists and non-secret preferences; Pushover keys, Railway credentials, account data, history and diagnostics are excluded from backup files.
+
+Version 0.6.2 adds Railway-backed live status to the popup as well as active-watch cleanup. When a scheduled catalogue goes live, its card switches automatically to **Live**, shows Railway's current lot and recalculates the distance to every watched lot without requiring the Bid Live tab to remain open. The extension synchronizes only public auction URLs, active watched lot numbers, alert stages and public lot descriptions. Railway never receives auction-house passwords, cookies, payment information or bidding access. Confirmed-ended timed lots, passed live lots, completed auctions and empty stale records are removed automatically; future and temporarily unavailable auctions are retained. When cloud mode is connected, Railway owns Pushover delivery and Chrome retains local desktop alerts, avoiding duplicate phone notifications. Local tab-disconnection warnings are suppressed because closing the computer is expected; cloud lookup failures use a strict two-notification limit: one initial warning and one reminder after 10 minutes, then silence until monitoring has been healthy continuously for 10 minutes.
 
 Version 0.5.3 prevents repeated **Auction monitoring needs attention** notifications during one continuous outage. Each monitored auction now sends one warning when contact is first lost and, if it remains disconnected, one final reminder after 10 minutes. It then stays silent until monitoring has been healthy continuously for 10 minutes. Changes between related failure states, such as a stale heartbeat, closed tab or discarded tab, remain part of the same outage and do not generate extra alerts.
 
@@ -75,7 +77,7 @@ Keep the unzipped folder in a permanent location. Chrome does not charge a devel
 
 ### Updating from an earlier version
 
-Replace the files inside the same previously loaded `easy-live-lot-watcher` folder with the version 0.6.0 files. Open `chrome://extensions`, click **Reload** on the extension, and reload auction tabs that were already open.
+Replace the files inside the same previously loaded `easy-live-lot-watcher` folder with the version 0.7.0 files. Open `chrome://extensions`, click **Reload** on the extension, and reload auction tabs that were already open.
 
 Using the same folder and extension entry preserves watch lists, settings and Pushover keys. Timed alert stages already recorded by earlier versions remain recorded and will not repeat after an extension.
 
@@ -104,12 +106,12 @@ If macOS prompts for notification access, allow Google Chrome in **System Settin
 
 ## 3. Monitor a live webcast
 
-1. Before the webcast starts, open the auction’s **main catalogue**. Once live bidding is available, open its **Watch Live** page.
+1. Before the webcast starts, open the auction’s **main catalogue**. With local-only monitoring, open its **Watch Live** page once bidding starts. With Railway connected, the cloud watcher follows the live page independently.
 2. Open Lot Watcher and enable the auction-house website when prompted.
 3. Enter lot numbers separated by commas, for example `125, 208A, 310`.
-4. The catalogue shows **Scheduled live** before the sale and saves the watch list. Leave the **Watch Live** page open once the webcast starts. You can browse other Chrome tabs normally.
+4. The catalogue shows **Scheduled live** before the sale and saves the watch list. In local-only mode, leave the **Watch Live** page open once the webcast starts. You can browse other Chrome tabs normally.
 
-No lot-distance alert is sent from the pre-live catalogue because it has no current live lot yet. The catalogue is used to prepare and retain the watch list; the live bidding page supplies the current-lot feed needed for the 5-lots-away calculation.
+No lot-distance alert is sent until a current live lot exists. The catalogue is used to prepare and retain the watch list; the live bidding feed supplies the current lot needed for the 5-lots-away calculation. Railway obtains that feed directly when cloud monitoring is enabled.
 
 The extension follows catalogue order, so gaps and lettered lots are handled correctly. If the auction jumps over lots, it selects the nearest still-useful alert stage instead of sending several overdue warnings at once.
 
@@ -153,7 +155,9 @@ On the current-auction view, click **Run readiness test** shortly before bidding
 - Pushover credentials and test delivery when enabled; and
 - reliability-mode tab and sleep protection.
 
-The test itself sends a desktop notification and, when configured, a Pushover notification. Readiness details and recent history are collapsible so urgent lots remain prominent. Alerts, tests, lost connections, recovery actions, delivery results and deadline extensions remain available in the local log.
+The test itself sends a desktop notification and, when configured, a Pushover notification. Readiness details and recent history are collapsible so urgent lots remain prominent. The dashboard also shows the latest Railway update, an exact local/cloud watch comparison and Railway's Pushover acceptance log. Alerts, tests, lost connections, recovery actions, delivery results and deadline extensions remain available in the local log.
+
+Use **Settings → Backup and restore** to download a JSON backup. Restoring merges the saved lots into the current lists, so it does not delete newer watches. Notification and cloud credentials are deliberately excluded.
 
 If a fault is difficult to reproduce, open **Report an issue** at the bottom of the popup as soon as possible after it happens and select **Download issue report**. Attach that JSON file with a short description of what you were doing, such as “I added lot 125 and refreshed the catalogue.” The rolling journal retains the latest 200 diagnostic events.
 
@@ -189,4 +193,4 @@ The extension does not place bids, automate sign-in or collect bid history. In c
 
 Use alerts as a convenience rather than the only safeguard for a time-sensitive purchase. Site changes, skipped lots, network outages, browser suspension and notification-service delays can still prevent or delay an alert.
 
-SMS backup and automated bidding are not included in version 0.6.0.
+SMS alerts and automated bidding are not included in version 0.7.0.

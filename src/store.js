@@ -10,6 +10,7 @@ export function emptyState() {
     runtime: {},
     alerts: {},
     incidents: {},
+    readiness: {},
     completedAuctions: {},
     completedLots: {},
     events: []

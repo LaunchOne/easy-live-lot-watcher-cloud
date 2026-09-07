@@ -1,6 +1,8 @@
 import { dueStage, liveDistance } from "./easy-live.js";
 
 const TEN_MINUTES = 10 * 60 * 1000;
+const PRE_AUCTION_WARNING_MS = 15 * 60 * 1000;
+const PRE_AUCTION_LATE_WINDOW_MS = 30 * 60 * 1000;
 
 function alertKey(auctionKey, lot, stage) {
   return `${auctionKey}::${lot}::${Number(stage)}`;
@@ -73,6 +75,7 @@ export class Watcher {
           monitoringComplete: Boolean(snapshot.auctionEnded || terminalLots.size === auction.lots.length)
         };
         await this.recoverIncident(state, auction);
+        await this.evaluatePreAuctionReadiness(state, auction, snapshot);
         await this.evaluateAlerts(state, auction, snapshot);
         const auctionRemoved = this.retireTerminalLots(state, auction, terminalLots, snapshot);
         if (auctionRemoved) {
@@ -133,6 +136,7 @@ export class Watcher {
       delete state.auctions[auction.auctionKey];
       delete state.runtime[auction.auctionKey];
       delete state.incidents[auction.auctionKey];
+      delete state.readiness?.[auction.auctionKey];
       this.store.event("monitoring-complete", { auctionKey: auction.auctionKey, label: auction.label });
     } else {
       this.store.event("completed-lots-removed", {
@@ -184,13 +188,18 @@ export class Watcher {
       const key = alertKey(auction.auctionKey, watched.lot, stage);
       state.alerts[key] = { status: "sending", deadlineMs: lot.deadlineMs, at: this.now() };
       try {
-        await this.pushover.send({
+        const result = await this.pushover.send({
           title: `Lot ${watched.lot} ends in about ${formatTimedStage(stage)}`,
           message: `${snapshot.label || auction.label}${lot.description ? `\n${lot.description}` : ""}`,
           url: lot.url || watched.url || auction.url
         });
-        state.alerts[key] = { status: "sent", deadlineMs: lot.deadlineMs, sentAt: this.now() };
-        this.store.event("alert-sent", { mode: "timed", auctionKey: auction.auctionKey, lot: watched.lot, stage });
+        const sentAt = this.now();
+        state.alerts[key] = { status: "sent", deadlineMs: lot.deadlineMs, sentAt, pushoverRequest: String(result?.request || "") };
+        this.store.event("alert-sent", {
+          mode: "timed", auctionKey: auction.auctionKey, lot: watched.lot, stage,
+          acceptedAt: sentAt, deadlineMs: lot.deadlineMs, pushoverAccepted: true,
+          pushoverRequest: String(result?.request || "")
+        });
       } catch (error) {
         delete state.alerts[key];
         this.store.event("alert-failed", { auctionKey: auction.auctionKey, lot: watched.lot, stage, error: error.message }, "error");
@@ -212,18 +221,82 @@ export class Watcher {
       const key = alertKey(auction.auctionKey, watched.lot, stage);
       state.alerts[key] = { status: "sending", currentLot: snapshot.currentLot, at: this.now() };
       try {
-        await this.pushover.send({
+        const result = await this.pushover.send({
           title: remaining === 0 ? `Lot ${watched.lot} is live now` : `Lot ${watched.lot} is ${remaining} lot${remaining === 1 ? "" : "s"} away`,
           message: snapshot.label || auction.label,
           url: snapshot.bidLiveUrl || auction.bidLiveUrl || auction.url
         });
-        state.alerts[key] = { status: "sent", currentLot: snapshot.currentLot, sentAt: this.now() };
-        this.store.event("alert-sent", { mode: "live", auctionKey: auction.auctionKey, lot: watched.lot, stage });
+        const sentAt = this.now();
+        state.alerts[key] = { status: "sent", currentLot: snapshot.currentLot, sentAt, pushoverRequest: String(result?.request || "") };
+        this.store.event("alert-sent", {
+          mode: "live", auctionKey: auction.auctionKey, lot: watched.lot, stage,
+          currentLot: snapshot.currentLot, acceptedAt: sentAt, pushoverAccepted: true,
+          pushoverRequest: String(result?.request || "")
+        });
       } catch (error) {
         delete state.alerts[key];
         this.store.event("alert-failed", { auctionKey: auction.auctionKey, lot: watched.lot, stage, error: error.message }, "error");
       }
     }
+  }
+
+  async evaluatePreAuctionReadiness(state, auction, snapshot) {
+    if (auction.mode !== "live") return;
+    state.readiness ||= {};
+    const existing = state.readiness[auction.auctionKey] || {};
+    const now = this.now();
+    const startsAtMs = snapshot.startsAtMs === null || snapshot.startsAtMs === undefined || snapshot.startsAtMs === ""
+      ? Number.NaN : Number(snapshot.startsAtMs);
+    if (snapshot.auctionEnded) {
+      state.readiness[auction.auctionKey] = { ...existing, status: "complete", checkedAt: now, startsAtMs: Number.isFinite(startsAtMs) ? startsAtMs : null };
+      return;
+    }
+    if (snapshot.currentLot) {
+      const recovered = existing.status === "warning";
+      state.readiness[auction.auctionKey] = { status: "ready", checkedAt: now, startsAtMs: Number.isFinite(startsAtMs) ? startsAtMs : existing.startsAtMs || null };
+      if (recovered) this.store.event("pre-auction-feed-ready", { auctionKey: auction.auctionKey, currentLot: snapshot.currentLot });
+      return;
+    }
+    if (!Number.isFinite(startsAtMs)) {
+      state.readiness[auction.auctionKey] = { ...existing, status: "scheduled", checkedAt: now, startsAtMs: null };
+      return;
+    }
+    const untilStart = startsAtMs - now;
+    const warningWindow = untilStart <= PRE_AUCTION_WARNING_MS && untilStart >= -PRE_AUCTION_LATE_WINDOW_MS;
+    const sameStart = Number(existing.startsAtMs) === startsAtMs;
+    if (!warningWindow) {
+      state.readiness[auction.auctionKey] = { status: "scheduled", checkedAt: now, startsAtMs };
+      return;
+    }
+    if (sameStart && existing.warningSentAt) {
+      state.readiness[auction.auctionKey] = { ...existing, status: "warning", checkedAt: now };
+      return;
+    }
+    const minutes = Math.max(0, Math.ceil(untilStart / 60000));
+    const message = untilStart > 0
+      ? `${auction.label}\nThe live feed is not available with about ${minutes} minute${minutes === 1 ? "" : "s"} until the scheduled start.`
+      : `${auction.label}\nThe scheduled start time has passed, but the live feed is not available yet.`;
+    let delivery = "failed";
+    let pushoverRequest = "";
+    try {
+      const result = await this.pushover.send({
+        title: "Live auction readiness needs attention",
+        message,
+        url: auction.bidLiveUrl || auction.url
+      });
+      delivery = "accepted";
+      pushoverRequest = String(result?.request || "");
+    } catch (error) {
+      this.store.event("pre-auction-warning-failed", { auctionKey: auction.auctionKey, error: error.message }, "error");
+    }
+    state.readiness[auction.auctionKey] = {
+      status: "warning", checkedAt: now, startsAtMs, warningSentAt: now,
+      delivery, pushoverRequest
+    };
+    this.store.event("pre-auction-warning", {
+      auctionKey: auction.auctionKey, startsAtMs, warningSentAt: now,
+      pushoverAccepted: delivery === "accepted", pushoverRequest
+    }, "warning");
   }
 
   async handleFailure(auction, error) {

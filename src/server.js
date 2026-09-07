@@ -60,7 +60,7 @@ function publicHealth() {
   return {
     ok: missingConfiguration.length === 0 && healthyLoop,
     service: "easy-live-lot-watcher-cloud",
-    version: "1.0.2",
+    version: "1.1.0",
     configured: missingConfiguration.length === 0,
     watcher: loop,
     auctionCount: auctions.length,
@@ -81,9 +81,17 @@ function privateStatus() {
     syncedAt: store.state.syncedAt,
     runtime: store.state.runtime,
     incidents: store.state.incidents,
+    readiness: store.state.readiness,
+    activeAuctions: Object.values(store.state.auctions).map((auction) => ({
+      auctionKey: auction.auctionKey,
+      mode: auction.mode,
+      label: auction.label,
+      lots: auction.lots.map((lot) => lot.lot)
+    })),
     completedAuctions: store.state.completedAuctions,
     completedLots: store.state.completedLots,
-    events: store.state.events.slice(0, 50),
+    events: store.state.events.slice(0, 100),
+    alertLog: store.state.events.filter((event) => ["alert-sent", "alert-failed", "pre-auction-warning", "pre-auction-warning-failed"].includes(event.type)).slice(0, 50),
     pushoverConfigured: pushover.configured
   };
 }
@@ -141,6 +149,7 @@ const server = createServer(async (request, response) => {
         for (const key of removed) {
           delete state.runtime[key];
           delete state.incidents[key];
+          delete state.readiness?.[key];
           for (const alert of Object.keys(state.alerts)) if (alert.startsWith(`${key}::`)) delete state.alerts[alert];
         }
         store.event("extension-synced", { auctionCount: Object.keys(auctions).length, removedCount: removed.length });

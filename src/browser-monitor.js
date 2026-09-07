@@ -206,7 +206,7 @@ export class BrowserMonitor {
 
   async liveAuction(auction) {
     const directLiveUrl = isBidLiveUrl(auction.url) ? auction.url : "";
-    let context = { label: auction.label, ended: false, bidLiveUrl: "" };
+    let context = { label: auction.label, ended: false, bidLiveUrl: "", startsAt: null };
     let catalogueOrder = [];
     if (!directLiveUrl) {
       const cataloguePage = await this.pageFor(`${auction.auctionKey}:catalogue`, auction.url);
@@ -215,8 +215,12 @@ export class BrowserMonitor {
       catalogueOrder = await this.catalogueOrder(cataloguePage, context);
     }
     const bidLiveUrl = directLiveUrl || auction.bidLiveUrl || context.bidLiveUrl;
+    const startsAtMs = parseEasyLiveTime(context.startsAt);
     if (!bidLiveUrl) {
-      return { mode: "live", label: context.label || auction.label, scheduled: true, auctionEnded: context.ended, currentLot: "", order: catalogueOrder };
+      return {
+        mode: "live", label: context.label || auction.label, scheduled: true,
+        auctionEnded: context.ended, currentLot: "", startsAtMs, order: catalogueOrder
+      };
     }
     const livePage = await this.pageFor(`${auction.auctionKey}:live`, bidLiveUrl);
     await livePage.waitForLoadState("domcontentloaded");
@@ -242,6 +246,7 @@ export class BrowserMonitor {
       scheduled: !live.currentLot && !live.ended,
       auctionEnded: Boolean(context.ended || live.ended),
       currentLot: normalizeLot(live.currentLot),
+      startsAtMs,
       bidLiveUrl,
       order: catalogueOrder.length ? catalogueOrder : Array.from(new Set(live.order.map(normalizeLot)))
     };

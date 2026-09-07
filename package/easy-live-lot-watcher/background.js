@@ -43,6 +43,8 @@ const HEALTH_REMINDER_MS = 10 * 60 * 1000;
 const HEALTH_RECOVERY_RESET_MS = 10 * 60 * 1000;
 const HEALTH_MAX_NOTIFICATIONS = 2;
 const DIAGNOSTIC_LIMIT = 200;
+const CLOUD_STATUS_REFRESH_MS = 15 * 1000;
+const BACKUP_FORMAT = "easy-live-lot-watcher-backup";
 let mutationQueue = Promise.resolve();
 let powerHeld = false;
 const protectedTabIds = new Set();
@@ -171,6 +173,65 @@ function terminalLotState(state) {
 function allWatchedLotsTerminal(status) {
   const watched = status?.watched || [];
   return watched.length > 0 && watched.every((item) => terminalLotState(item.state));
+}
+
+function cloudLiveDistance(current, target, order = []) {
+  const currentLot = normalizeLot(current);
+  const targetLot = normalizeLot(target);
+  const normalizedOrder = order.map(normalizeLot);
+  const currentIndex = normalizedOrder.indexOf(currentLot);
+  const targetIndex = normalizedOrder.indexOf(targetLot);
+  if (currentIndex >= 0 && targetIndex >= 0) return targetIndex - currentIndex;
+  const currentNumber = Number(currentLot.match(/^\d+/)?.[0]);
+  const targetNumber = Number(targetLot.match(/^\d+/)?.[0]);
+  return Number.isFinite(currentNumber) && Number.isFinite(targetNumber) ? targetNumber - currentNumber : null;
+}
+
+function mergeCloudLiveRuntime(auctionKey, config, localStatus = {}, cloudRuntime = {}) {
+  const currentLot = normalizeLot(cloudRuntime.currentLot);
+  if (!currentLot) return localStatus;
+  const order = Array.isArray(cloudRuntime.order) ? cloudRuntime.order.map(normalizeLot).filter(Boolean) : [];
+  const localByLot = new Map((localStatus.watched || []).map((item) => [normalizeLot(item.targetLot), item]));
+  const watched = (config.lots || []).map((targetLot) => {
+    const lot = normalizeLot(targetLot);
+    const existing = localByLot.get(lot) || { targetLot: lot };
+    const remaining = cloudLiveDistance(currentLot, lot, order);
+    const state = !Number.isFinite(remaining) ? "waiting" : remaining < 0 ? "passed" : remaining === 0 ? "live" : "upcoming";
+    const statusText = state === "waiting" ? "Waiting for live catalogue order"
+      : state === "passed" ? "Passed"
+        : state === "live" ? "Live now"
+          : `${remaining} lot${remaining === 1 ? "" : "s"} away`;
+    return {
+      ...existing,
+      targetLot: lot,
+      currentLot,
+      remaining,
+      state,
+      statusText,
+      visible: Number.isFinite(remaining),
+      bidUrl: cloudRuntime.bidLiveUrl || localStatus.bidLiveUrl || existing.bidUrl || existing.url || config.url || ""
+    };
+  }).sort((left, right) => {
+    const rank = (item) => item.state === "live" ? -1 : item.state === "upcoming" ? item.remaining : item.state === "passed" ? 100000 : 99999;
+    return rank(left) - rank(right);
+  });
+  return {
+    ...localStatus,
+    mode: "live",
+    auctionKey,
+    auctionLabel: cloudRuntime.label || localStatus.auctionLabel || config.auctionLabel || "Live auction",
+    livePhase: "active",
+    ready: true,
+    currentLot,
+    orderSize: order.length,
+    auctionEnded: Boolean(cloudRuntime.auctionEnded),
+    monitoringComplete: Boolean(cloudRuntime.monitoringComplete),
+    bidLiveUrl: cloudRuntime.bidLiveUrl || localStatus.bidLiveUrl || config.bidLiveUrl || "",
+    url: cloudRuntime.bidLiveUrl || localStatus.url || config.url || "",
+    cloudManaged: true,
+    lastSeen: Number(cloudRuntime.lastSuccessAt || cloudRuntime.lastCheckedAt || Date.now()),
+    watched
+  };
 }
 
 function confirmedTerminalWatch(mode, item, auctionEnded = false) {
@@ -408,6 +469,10 @@ async function syncCloud({ test = false } = {}) {
       watchedLotCount: sync.watchedLotCount ?? remote.watchedLots?.total ?? null,
       serviceVersion: remote.version || "",
       runtime: remote.runtime || {},
+      readiness: remote.readiness || {},
+      activeAuctions: remote.activeAuctions || [],
+      events: remote.events || [],
+      alertLog: remote.alertLog || [],
       error: ""
     };
     await chrome.storage.local.set({ [STORAGE_KEYS.cloudStatus]: status });
@@ -423,6 +488,56 @@ async function syncCloud({ test = false } = {}) {
     await recordDiagnostic({ event: "cloud-sync-failed", level: "error", details: { message: status.error } });
     throw error;
   }
+}
+
+async function refreshCloudStatus({ force = false } = {}) {
+  const settings = await getSettings();
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.cloudStatus);
+  const previous = stored[STORAGE_KEYS.cloudStatus] || { connected: false };
+  if (!settings.cloudEnabled) return { connected: false, disabled: true, checkedAt: Date.now(), error: "" };
+  if (!force && previous.connected && Date.now() - Number(previous.checkedAt || 0) < CLOUD_STATUS_REFRESH_MS) return previous;
+  try {
+    const remote = await cloudRequest("/api/status", { method: "GET" });
+    await applyCloudCompletions(remote);
+    const status = {
+      ...previous,
+      connected: true,
+      checkedAt: Date.now(),
+      auctionCount: remote.auctionCount ?? previous.auctionCount ?? null,
+      watchedLotCount: remote.watchedLots?.total ?? previous.watchedLotCount ?? null,
+      serviceVersion: remote.version || previous.serviceVersion || "",
+      runtime: remote.runtime || {},
+      readiness: remote.readiness || {},
+      activeAuctions: remote.activeAuctions || [],
+      events: remote.events || [],
+      alertLog: remote.alertLog || [],
+      error: ""
+    };
+    await chrome.storage.local.set({ [STORAGE_KEYS.cloudStatus]: status });
+    return status;
+  } catch (error) {
+    const recentlyConnected = previous.connected && Date.now() - Number(previous.checkedAt || 0) < 3 * 60 * 1000;
+    const status = {
+      ...previous,
+      connected: recentlyConnected,
+      error: error.message || String(error),
+      failedAt: Date.now()
+    };
+    await chrome.storage.local.set({ [STORAGE_KEYS.cloudStatus]: status });
+    return status;
+  }
+}
+
+async function effectiveLiveStatus(localStatus) {
+  if (localStatus?.mode !== "live" || !localStatus.auctionKey || localStatus.currentLot) return localStatus;
+  const cloud = await refreshCloudStatus();
+  const cloudRuntime = cloud.runtime?.[localStatus.auctionKey];
+  const fresh = cloud.connected && cloudRuntime &&
+    Date.now() - Number(cloudRuntime.lastSuccessAt || cloudRuntime.lastCheckedAt || 0) < 3 * 60 * 1000;
+  if (!fresh || !cloudRuntime.currentLot) return localStatus;
+  const stored = await chrome.storage.local.get(STORAGE_KEYS.configs);
+  const config = (stored[STORAGE_KEYS.configs] || {})[localStatus.auctionKey];
+  return config ? mergeCloudLiveRuntime(localStatus.auctionKey, config, localStatus, cloudRuntime) : localStatus;
 }
 
 function scheduleCloudSync(delay = 500) {
@@ -1266,9 +1381,13 @@ async function readinessSummary({ auctionKey } = {}) {
   if (settings.cloudEnabled) {
     const cloud = stored[STORAGE_KEYS.cloudStatus] || {};
     const cloudRuntime = cloud.runtime?.[auctionKey] || null;
+    const cloudReadiness = cloud.readiness?.[auctionKey] || null;
     if (cloud.connected && Date.now() - Number(cloud.checkedAt || 0) < 3 * 60 * 1000) {
       if (cloudRuntime?.monitoringComplete) {
         return { state: "complete", label: "Cloud complete", detail: "Railway has finished monitoring this auction" };
+      }
+      if (cloudReadiness?.status === "warning") {
+        return { state: "attention", label: "Feed attention", detail: "The scheduled live feed has not appeared yet" };
       }
       if (cloudRuntime?.error) return { state: "attention", label: "Cloud attention", detail: cloudRuntime.error };
       return { state: "ready", label: "Cloud ready", detail: "Railway continues monitoring when this Mac is closed" };
@@ -1397,20 +1516,189 @@ function urgencyScore(mode, item) {
   return Number.MAX_SAFE_INTEGER - 1;
 }
 
+function configuredAuctionEntries(liveConfigs = {}, timedConfigs = {}) {
+  return [
+    ...Object.entries(liveConfigs).map(([auctionKey, config]) => ({ auctionKey, mode: "live", config })),
+    ...Object.entries(timedConfigs).map(([auctionKey, config]) => ({ auctionKey, mode: "timed", config }))
+  ].filter((entry) => configHasLots(entry.config));
+}
+
+function cloudReconciliation(entries, cloud, enabled) {
+  const local = new Map(entries.map((entry) => [entry.auctionKey, {
+    auctionKey: entry.auctionKey,
+    mode: entry.mode,
+    label: entry.config.auctionLabel || "Auction",
+    lots: Array.from(new Set((entry.config.lots || []).map(normalizeLot))).sort()
+  }]));
+  const remote = new Map((cloud.activeAuctions || []).map((auction) => [auction.auctionKey, {
+    auctionKey: auction.auctionKey,
+    mode: auction.mode,
+    label: auction.label || "Auction",
+    lots: Array.from(new Set((auction.lots || []).map(normalizeLot))).sort()
+  }]));
+  const keys = Array.from(new Set([...local.keys(), ...remote.keys()]));
+  const auctions = keys.map((auctionKey) => {
+    const here = local.get(auctionKey);
+    const there = remote.get(auctionKey);
+    const localLots = new Set(here?.lots || []);
+    const cloudLots = new Set(there?.lots || []);
+    const missingInCloud = Array.from(localLots).filter((lot) => !cloudLots.has(lot));
+    const cloudOnly = Array.from(cloudLots).filter((lot) => !localLots.has(lot));
+    return {
+      auctionKey,
+      mode: here?.mode || there?.mode || "",
+      label: here?.label || there?.label || "Auction",
+      localCount: localLots.size,
+      cloudCount: cloudLots.size,
+      missingInCloud,
+      cloudOnly,
+      matched: Boolean(here && there && !missingInCloud.length && !cloudOnly.length)
+    };
+  }).sort((a, b) => a.label.localeCompare(b.label));
+  const totals = {
+    local: entries.reduce((total, entry) => total + (entry.config.lots || []).length, 0),
+    cloud: Array.from(remote.values()).reduce((total, entry) => total + entry.lots.length, 0)
+  };
+  return {
+    enabled,
+    connected: Boolean(cloud.connected),
+    matched: Boolean(enabled && cloud.connected && auctions.every((auction) => auction.matched)),
+    totals,
+    auctions
+  };
+}
+
+function backupSettings(settings) {
+  const allowed = [
+    "threshold", "timedThresholdMinutes", "defaultLiveStages", "defaultTimedStagesSeconds",
+    "accountWatchImportEnabled", "desktopEnabled", "pushoverEnabled", "pushoverPriority",
+    "reliabilityMode", "autoRecoveryEnabled", "disconnectWarningMinutes"
+  ];
+  return Object.fromEntries(allowed.filter((key) => settings[key] !== undefined).map((key) => [key, settings[key]]));
+}
+
+async function createBackup() {
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.settings, STORAGE_KEYS.configs, STORAGE_KEYS.timedConfigs, STORAGE_KEYS.origins
+  ]);
+  return {
+    format: BACKUP_FORMAT,
+    schemaVersion: 1,
+    extensionVersion: chrome.runtime.getManifest().version,
+    exportedAt: new Date().toISOString(),
+    notice: "Watch lists and non-secret preferences. Pushover keys and Railway credentials are excluded.",
+    settings: backupSettings({ ...DEFAULT_SETTINGS, ...(stored[STORAGE_KEYS.settings] || {}) }),
+    liveAuctions: stored[STORAGE_KEYS.configs] || {},
+    timedAuctions: stored[STORAGE_KEYS.timedConfigs] || {},
+    enabledOrigins: stored[STORAGE_KEYS.origins] || []
+  };
+}
+
+function safeBackupUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" ? url.href : "";
+  } catch (_error) { return ""; }
+}
+
+function sanitizedBackupConfigs(input, mode, settings) {
+  const result = {};
+  for (const [auctionKey, raw] of Object.entries(input && typeof input === "object" ? input : {}).slice(0, 200)) {
+    if (!auctionKey || auctionKey.length > 500 || ["__proto__", "prototype", "constructor"].includes(auctionKey)) continue;
+    const lots = Array.from(new Set((Array.isArray(raw?.lots) ? raw.lots : []).map(normalizeLot).filter(Boolean))).slice(0, 500);
+    const url = safeBackupUrl(raw?.url);
+    if (!lots.length || !url) continue;
+    const lotOptions = {};
+    for (const lot of lots) {
+      const old = raw?.lotOptions?.[lot] || {};
+      lotOptions[lot] = mode === "timed"
+        ? { stagesSeconds: normalizeTimedStages(old.stagesSeconds, settings.defaultTimedStagesSeconds), importedFromAccount: old.importedFromAccount === true }
+        : { stages: normalizeLiveStages(old.stages, settings.defaultLiveStages), importedFromAccount: old.importedFromAccount === true };
+    }
+    result[auctionKey] = {
+      mode,
+      auctionId: String(raw?.auctionId || "").slice(0, 500),
+      dayId: String(raw?.dayId || "").slice(0, 500),
+      auctionLabel: String(raw?.auctionLabel || (mode === "live" ? "Live auction" : "Timed auction")).slice(0, 500),
+      url,
+      bidLiveUrl: safeBackupUrl(raw?.bidLiveUrl),
+      lots,
+      lotOptions,
+      updatedAt: Date.now()
+    };
+  }
+  return result;
+}
+
+async function importBackup(backup) {
+  if (!backup || backup.format !== BACKUP_FORMAT || Number(backup.schemaVersion) !== 1) {
+    throw new Error("This is not a valid Easy Live Lot Watcher backup.");
+  }
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.settings, STORAGE_KEYS.configs, STORAGE_KEYS.timedConfigs, STORAGE_KEYS.origins
+  ]);
+  const currentSettings = { ...DEFAULT_SETTINGS, ...(stored[STORAGE_KEYS.settings] || {}) };
+  const restoredSettings = { ...currentSettings, ...backupSettings(backup.settings || {}) };
+  const incomingLive = sanitizedBackupConfigs(backup.liveAuctions, "live", restoredSettings);
+  const incomingTimed = sanitizedBackupConfigs(backup.timedAuctions, "timed", restoredSettings);
+  const merge = (current, incoming) => {
+    const result = { ...(current || {}) };
+    for (const [key, config] of Object.entries(incoming)) {
+      const old = result[key] || { lots: [], lotOptions: {} };
+      const lots = Array.from(new Set([...(old.lots || []), ...config.lots].map(normalizeLot)));
+      result[key] = {
+        ...config, ...old, lots,
+        lotOptions: { ...(config.lotOptions || {}), ...(old.lotOptions || {}) },
+        updatedAt: Date.now()
+      };
+    }
+    return result;
+  };
+  const origins = Array.from(new Set([...(stored[STORAGE_KEYS.origins] || []), ...(backup.enabledOrigins || [])
+    .filter((origin) => /^https:\/\/[^/]+$/i.test(String(origin)))]));
+  const live = merge(stored[STORAGE_KEYS.configs], incomingLive);
+  const timed = merge(stored[STORAGE_KEYS.timedConfigs], incomingTimed);
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.settings]: restoredSettings,
+    [STORAGE_KEYS.configs]: live,
+    [STORAGE_KEYS.timedConfigs]: timed,
+    [STORAGE_KEYS.origins]: origins
+  });
+  await restoreRegistrations();
+  await recordDiagnostic({ event: "backup-restored", details: {
+    liveAuctions: Object.keys(incomingLive).length,
+    timedAuctions: Object.keys(incomingTimed).length
+  } });
+  if (restoredSettings.cloudEnabled) scheduleCloudSync();
+  return {
+    liveAuctions: Object.keys(incomingLive).length,
+    timedAuctions: Object.keys(incomingTimed).length,
+    watchedLots: [...Object.values(incomingLive), ...Object.values(incomingTimed)]
+      .reduce((total, config) => total + config.lots.length, 0)
+  };
+}
+
 async function getDashboard() {
   const settings = await getSettings();
+  if (settings.cloudEnabled) await refreshCloudStatus();
   const stored = await chrome.storage.local.get([
-    STORAGE_KEYS.configs, STORAGE_KEYS.timedConfigs, STORAGE_KEYS.runtime, STORAGE_KEYS.history, STORAGE_KEYS.healthWarnings
+    STORAGE_KEYS.configs, STORAGE_KEYS.timedConfigs, STORAGE_KEYS.runtime, STORAGE_KEYS.history,
+    STORAGE_KEYS.healthWarnings, STORAGE_KEYS.cloudStatus
   ]);
   const runtime = stored[STORAGE_KEYS.runtime] || {};
   const warnings = stored[STORAGE_KEYS.healthWarnings] || {};
-  const source = [
-    ...Object.entries(stored[STORAGE_KEYS.configs] || {}).map(([auctionKey, config]) => ({ auctionKey, mode: "live", config })),
-    ...Object.entries(stored[STORAGE_KEYS.timedConfigs] || {}).map(([auctionKey, config]) => ({ auctionKey, mode: "timed", config }))
-  ].filter((entry) => configHasLots(entry.config));
+  const cloud = stored[STORAGE_KEYS.cloudStatus] || {};
+  const source = configuredAuctionEntries(stored[STORAGE_KEYS.configs] || {}, stored[STORAGE_KEYS.timedConfigs] || {});
   const auctions = [];
   for (const entry of source) {
-    const status = runtime[entry.auctionKey] || null;
+    let status = runtime[entry.auctionKey] || null;
+    const cloudRuntime = cloud.runtime?.[entry.auctionKey] || null;
+    const cloudReadiness = cloud.readiness?.[entry.auctionKey] || null;
+    const cloudFresh = Boolean(settings.cloudEnabled && cloud.connected && cloudRuntime &&
+      Date.now() - Number(cloudRuntime.lastSuccessAt || cloudRuntime.lastCheckedAt || 0) < 3 * 60 * 1000);
+    if (entry.mode === "live" && cloudFresh && cloudRuntime.currentLot && !status?.currentLot) {
+      status = mergeCloudLiveRuntime(entry.auctionKey, entry.config, status || {}, cloudRuntime);
+    }
     const tab = await getTab(status?.tabId);
     const freshness = status ? Date.now() - Number(status.lastSeen || 0) : Infinity;
     const monitoringComplete = Boolean(status?.monitoringComplete || allWatchedLotsTerminal(status));
@@ -1420,11 +1708,14 @@ async function getDashboard() {
       auctionLabel: entry.config.auctionLabel || status?.auctionLabel || "Auction",
       url: status?.url || entry.config.url || "",
       tabId: status?.tabId || null,
-      connected: Boolean(tab && freshness < settings.disconnectWarningMinutes * 60 * 1000 && !tab.discarded && !tab.frozen),
+      connected: cloudFresh || Boolean(tab && freshness < settings.disconnectWarningMinutes * 60 * 1000 && !tab.discarded && !tab.frozen),
+      cloudManaged: Boolean(status?.cloudManaged || cloudFresh),
       auctionEnded: Boolean(status?.auctionEnded),
       monitoringComplete,
       terminalReason: status?.terminalReason || "",
-      healthProblem: monitoringComplete ? "" : warnings[entry.auctionKey]?.problem || "",
+      healthProblem: monitoringComplete ? "" : cloudReadiness?.status === "warning"
+        ? "Scheduled live feed has not appeared yet"
+        : warnings[entry.auctionKey]?.problem || "",
       lastSeen: status?.lastSeen || null,
       currentLot: status?.currentLot || "",
       watched: (status?.watched || (entry.config.lots || []).map((targetLot) => ({ targetLot, state: "waiting", statusText: "Waiting for auction tab" })))
@@ -1433,7 +1724,21 @@ async function getDashboard() {
     });
   }
   auctions.sort((a, b) => (a.watched[0]?.urgency ?? Infinity) - (b.watched[0]?.urgency ?? Infinity));
-  return { auctions, history: (stored[STORAGE_KEYS.history] || []).slice(0, 30), reliability: await refreshReliabilityState() };
+  return {
+    auctions,
+    history: (stored[STORAGE_KEYS.history] || []).slice(0, 30),
+    reliability: await refreshReliabilityState(),
+    cloud: {
+      enabled: settings.cloudEnabled,
+      connected: Boolean(cloud.connected),
+      checkedAt: cloud.checkedAt || null,
+      lastSyncAt: cloud.lastSyncAt || null,
+      error: cloud.error || "",
+      serviceVersion: cloud.serviceVersion || ""
+    },
+    reconciliation: cloudReconciliation(source, cloud, settings.cloudEnabled),
+    cloudAlertLog: (cloud.alertLog || []).slice(0, 30)
+  };
 }
 
 async function buildIssueReport({ auctionKey = "" } = {}) {
@@ -1500,6 +1805,22 @@ async function buildIssueReport({ auctionKey = "" } = {}) {
     timedAlarmIndex: stored[STORAGE_KEYS.timedAlarmIndex] || {},
     scheduledAlarms: alarms,
     healthWarnings: stored[STORAGE_KEYS.healthWarnings] || {},
+    cloudStatus: (() => {
+      const cloud = stored[STORAGE_KEYS.cloudStatus] || {};
+      return {
+        connected: Boolean(cloud.connected),
+        checkedAt: cloud.checkedAt || null,
+        lastSyncAt: cloud.lastSyncAt || null,
+        auctionCount: cloud.auctionCount ?? null,
+        watchedLotCount: cloud.watchedLotCount ?? null,
+        serviceVersion: cloud.serviceVersion || "",
+        error: cloud.error || "",
+        runtime: cloud.runtime || {},
+        readiness: cloud.readiness || {},
+        activeAuctions: cloud.activeAuctions || [],
+        alertLog: cloud.alertLog || []
+      };
+    })(),
     recentHistory: (stored[STORAGE_KEYS.history] || []).slice(0, 80),
     diagnosticLog: stored[STORAGE_KEYS.diagnostics] || [],
     registeredContentScripts: registeredScripts.map((script) => ({ id: script.id, matches: script.matches || [] }))
@@ -1632,23 +1953,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "UPDATE_LOT_ALERTS":
         return { ok: true, config: await serializeMutation(() => updateLotAlerts(message.payload)) };
       case "GET_DASHBOARD":
-        return { ok: true, dashboard: await getDashboard() };
+        return { ok: true, dashboard: await serializeMutation(getDashboard) };
       case "REFRESH_RELIABILITY":
         return { ok: true, reliability: await serializeMutation(refreshReliabilityState) };
       case "SYNC_CLOUD":
         return { ok: true, status: await serializeMutation(() => syncCloud()) };
       case "TEST_CLOUD":
         return { ok: true, status: await serializeMutation(() => syncCloud({ test: true })) };
-      case "GET_CLOUD_STATUS": {
-        const stored = await chrome.storage.local.get(STORAGE_KEYS.cloudStatus);
-        return { ok: true, status: stored[STORAGE_KEYS.cloudStatus] || { connected: false } };
-      }
+      case "GET_CLOUD_STATUS":
+        return { ok: true, status: await serializeMutation(() => refreshCloudStatus()) };
+      case "GET_EFFECTIVE_LIVE_STATUS":
+        return { ok: true, status: await serializeMutation(() => effectiveLiveStatus(message.payload?.status)) };
       case "RUN_READINESS_CHECK":
         return { ok: true, result: await serializeMutation(() => readinessCheck(message.payload)) };
       case "GET_READINESS_SUMMARY":
         return { ok: true, summary: await readinessSummary(message.payload) };
       case "CREATE_ISSUE_REPORT":
         return { ok: true, report: await serializeMutation(() => buildIssueReport(message.payload)) };
+      case "CREATE_BACKUP":
+        return { ok: true, backup: await serializeMutation(createBackup) };
+      case "IMPORT_BACKUP":
+        return { ok: true, result: await serializeMutation(() => importBackup(message.backup)) };
       case "OPEN_AUCTION": {
         await focusOrOpenUrl(message.url, message.tabId);
         return { ok: true };

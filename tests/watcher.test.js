@@ -4,14 +4,14 @@ import { Watcher } from "../src/watcher.js";
 
 function fixture(now = 1_000_000) {
   const sent = [];
-  const state = { auctions: {}, runtime: {}, alerts: {}, incidents: {}, events: [], revision: 0 };
+  const state = { auctions: {}, runtime: {}, alerts: {}, incidents: {}, readiness: {}, events: [], revision: 0 };
   const store = {
     state,
     event(type, details, level = "info") { state.events.push({ type, details, level }); },
     async mutate(action) { return action(state); }
   };
   const monitor = { async closeAuction() {}, async stop() {} };
-  const pushover = { async send(payload) { sent.push(payload); } };
+  const pushover = { async send(payload) { sent.push(payload); return { status: 1, request: `request-${sent.length}` }; } };
   return { watcher: new Watcher({ store, monitor, pushover, now: () => now }), state, sent, setNow(value) { now = value; } };
 }
 
@@ -21,6 +21,35 @@ test("timed stages send once and do not re-arm after an extension", async () => 
   await f.watcher.evaluateTimed(f.state, auction, { label: "Sale", lots: [{ lot: "10", deadlineMs: 1_120_000, ended: false, url: "https://lot" }] });
   await f.watcher.evaluateTimed(f.state, auction, { label: "Sale", lots: [{ lot: "10", deadlineMs: 1_180_000, ended: false, url: "https://lot" }] });
   assert.equal(f.sent.length, 1);
+  assert.equal(f.state.events.find((event) => event.type === "alert-sent").details.pushoverRequest, "request-1");
+});
+
+test("pre-auction live feed warning is sent once inside the fifteen-minute window", async () => {
+  const f = fixture();
+  const auction = { auctionKey: "live-a", mode: "live", label: "Live Sale", url: "https://example/live", lots: [{ lot: "20", stages: [5] }] };
+  const snapshot = { mode: "live", scheduled: true, currentLot: "", startsAtMs: 1_600_000, auctionEnded: false };
+  await f.watcher.evaluatePreAuctionReadiness(f.state, auction, snapshot);
+  await f.watcher.evaluatePreAuctionReadiness(f.state, auction, snapshot);
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.state.readiness["live-a"].status, "warning");
+  assert.equal(f.state.readiness["live-a"].delivery, "accepted");
+  assert.equal(f.state.events.filter((event) => event.type === "pre-auction-warning").length, 1);
+});
+
+test("pre-auction check stays quiet when the sale is not imminent and recovers when the feed appears", async () => {
+  const f = fixture();
+  const auction = { auctionKey: "live-a", mode: "live", label: "Live Sale", url: "https://example/live", lots: [{ lot: "20", stages: [5] }] };
+  await f.watcher.evaluatePreAuctionReadiness(f.state, auction, {
+    mode: "live", scheduled: true, currentLot: "", startsAtMs: 3_000_000, auctionEnded: false
+  });
+  assert.equal(f.sent.length, 0);
+  assert.equal(f.state.readiness["live-a"].status, "scheduled");
+  f.state.readiness["live-a"] = { status: "warning", warningSentAt: 900_000, startsAtMs: 1_500_000 };
+  await f.watcher.evaluatePreAuctionReadiness(f.state, auction, {
+    mode: "live", scheduled: false, currentLot: "18", startsAtMs: 1_500_000, auctionEnded: false
+  });
+  assert.equal(f.state.readiness["live-a"].status, "ready");
+  assert.equal(f.state.events.some((event) => event.type === "pre-auction-feed-ready"), true);
 });
 
 test("connection incident sends initial and ten-minute reminder only", async () => {

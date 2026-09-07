@@ -2,7 +2,7 @@
 
 An always-on Railway companion for the Easy Live Lot Watcher Chrome extension. It monitors public Easy Live auction pages and sends Pushover alerts while the user's computer is asleep or closed.
 
-Service v1.0.2 monitors live watches whether they were prepared from the scheduled catalogue or added directly from the **Bid Live** page. It removes confirmed-ended timed lots, passed live lots, completed auctions and empty stale records automatically. Public health counts represent active monitoring only and include separate live/timed totals.
+Service v1.1.0 monitors live watches whether they were prepared from the scheduled catalogue or added directly from the **Bid Live** page. It records an authenticated Pushover delivery audit for every auction alert and sends one pre-auction warning when a scheduled live feed is still unavailable within 15 minutes of its start. It also removes confirmed-ended timed lots, passed live lots, completed auctions and empty stale records automatically. Public health counts represent active monitoring only and include separate live/timed totals.
 
 ## Safety boundaries
 
@@ -27,7 +27,7 @@ Service v1.0.2 monitors live watches whether they were prepared from the schedul
 
 4. Generate a public Railway domain for the service.
 5. Confirm `https://YOUR-DOMAIN/health` returns JSON with `"ok": true`.
-6. Install extension v0.6.0, enter the Railway URL and `CLOUD_API_KEY`, then use **Save & test cloud**.
+6. Install extension v0.7.0, enter the Railway URL and `CLOUD_API_KEY`, then use **Save & test cloud**.
 
 Do not place secrets in this repository. The `.env.example` file contains names only.
 
@@ -37,14 +37,14 @@ The extension sends the service a complete watch-list snapshot. Removing a watch
 
 Timed alert stages send once even when a deadline is extended. If monitoring starts late, only the nearest useful stage is sent. Live lots use catalogue order where available, including lettered lot numbers.
 
-An auction-page failure sends at most two Pushover warnings for one continuous incident: an initial warning and one reminder after 10 minutes. Further warnings remain suppressed until the page has been healthy continuously for 10 minutes and a new incident begins.
+An auction-page failure sends at most two Pushover warnings for one continuous incident: an initial warning and one reminder after 10 minutes. Further warnings remain suppressed until the page has been healthy continuously for 10 minutes and a new incident begins. Scheduled live auctions also receive a single readiness warning when their current-lot feed has not appeared within 15 minutes of the advertised start.
 
 ## API
 
 `GET /health` is public for Railway health checks. All `/api/*` routes require `Authorization: Bearer CLOUD_API_KEY`.
 
 - `PUT /api/sync` replaces the complete watch configuration.
-- `GET /api/status` returns sanitized runtime status and recent service events.
+- `GET /api/status` returns runtime status, active watch summaries, pre-auction readiness state and the recent Pushover delivery audit.
 - `POST /api/test` sends a Pushover test.
 - `POST /api/check` triggers an immediate monitoring pass.
 

@@ -24,7 +24,8 @@ const fields = Object.fromEntries([
   "desktopEnabled", "pushoverEnabled", "pushoverUserKey", "pushoverAppToken", "pushoverPriority",
   "accountWatchImportEnabled", "reliabilityMode", "autoRecoveryEnabled", "disconnectWarningMinutes", "saveSettings", "testAlerts",
   "toggleSecrets", "statusMessage", "cloudEnabled", "cloudServiceUrl", "cloudApiKey", "cloudStatus", "testCloud",
-  "toggleCloudSecret", "monitoringLimitTitle", "monitoringLimitText"
+  "toggleCloudSecret", "monitoringLimitTitle", "monitoringLimitText",
+  "exportBackup", "chooseBackup", "backupFile", "backupStatus"
 ].map((id) => [id, document.querySelector(`#${id}`)]));
 
 function normalizeCloudUrl(value) {
@@ -107,6 +108,23 @@ function setCloudStatus(message, tone = "") {
 function setStatus(message, isError = false) {
   fields.statusMessage.textContent = message;
   fields.statusMessage.style.color = isError ? "#a5261c" : "#0d5725";
+}
+
+function setBackupStatus(message, isError = false) {
+  fields.backupStatus.textContent = message || "";
+  fields.backupStatus.classList.toggle("error", Boolean(message && isError));
+}
+
+function downloadJson(value, filename) {
+  const blobUrl = URL.createObjectURL(new Blob([`${JSON.stringify(value, null, 2)}\n`], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = filename;
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 }
 
 async function save() {
@@ -193,6 +211,45 @@ fields.toggleCloudSecret.addEventListener("click", () => {
 });
 
 fields.cloudEnabled.addEventListener("change", () => updateLimitCopy(fields.cloudEnabled.checked));
+
+fields.exportBackup.addEventListener("click", async () => {
+  fields.exportBackup.disabled = true;
+  setBackupStatus("");
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "CREATE_BACKUP" });
+    if (!response?.ok || !response.backup) throw new Error(response?.error || "The backup could not be created.");
+    downloadJson(response.backup, `easy-live-lot-watcher-backup-${new Date().toISOString().slice(0, 10)}.json`);
+    setBackupStatus("Backup downloaded. Keep it somewhere safe.");
+  } catch (error) {
+    setBackupStatus(error.message || "The backup could not be created.", true);
+  } finally {
+    fields.exportBackup.disabled = false;
+  }
+});
+
+fields.chooseBackup.addEventListener("click", () => fields.backupFile.click());
+
+fields.backupFile.addEventListener("change", async () => {
+  const file = fields.backupFile.files?.[0];
+  fields.backupFile.value = "";
+  if (!file) return;
+  fields.chooseBackup.disabled = true;
+  setBackupStatus("Checking backup…");
+  try {
+    if (file.size > 5 * 1024 * 1024) throw new Error("That backup is too large.");
+    const backup = JSON.parse(await file.text());
+    const response = await chrome.runtime.sendMessage({ type: "IMPORT_BACKUP", backup });
+    if (!response?.ok) throw new Error(response?.error || "The backup could not be restored.");
+    const count = Number(response.result?.watchedLots || 0);
+    setBackupStatus(`Backup merged successfully · ${count} watched lot${count === 1 ? "" : "s"} restored.`);
+    const stored = await chrome.storage.local.get("settings");
+    writeForm({ ...DEFAULT_SETTINGS, ...(stored.settings || {}) });
+  } catch (error) {
+    setBackupStatus(error.message || "The backup could not be restored.", true);
+  } finally {
+    fields.chooseBackup.disabled = false;
+  }
+});
 
 (async () => {
   const stored = await chrome.storage.local.get("settings");

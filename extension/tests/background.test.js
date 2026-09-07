@@ -69,7 +69,7 @@ function loadBackground() {
     navigator: { userAgent: "Test Chrome on macOS", language: "en-GB" },
     fetch: async () => ({})
   });
-  vm.runInContext(`${source}\n;globalThis.__test = { syncTimedSchedules, handleTimedAlarm, timedAlarmName, handleThresholdReached, liveStageKey, refreshReliabilityState, migrateMisclassifiedLiveConfig, importAccountWatches, readinessSummary, saveTimedLots, recordDiagnostic, buildIssueReport, checkHealth, buildCloudPayload, pruneCompletedWatches, applyCloudCompletions };`, context);
+  vm.runInContext(`${source}\n;globalThis.__test = { syncTimedSchedules, handleTimedAlarm, timedAlarmName, handleThresholdReached, liveStageKey, refreshReliabilityState, migrateMisclassifiedLiveConfig, importAccountWatches, readinessSummary, saveTimedLots, recordDiagnostic, buildIssueReport, checkHealth, buildCloudPayload, pruneCompletedWatches, applyCloudCompletions, mergeCloudLiveRuntime, cloudReconciliation, createBackup, importBackup };`, context);
   return { state, alarms, notifications, tabUpdates, powerEvents, api: context.__test };
 }
 
@@ -646,6 +646,63 @@ test("cloud synchronization includes public watch data but no Pushover credentia
   assert.doesNotMatch(text, /private-user-key|private-app-token|private-cloud-key/);
 });
 
+test("cloud reconciliation compares exact lot sets rather than totals alone", () => {
+  const harness = loadBackground();
+  const entries = [{
+    auctionKey: "sale-a", mode: "live",
+    config: { auctionLabel: "Sale A", lots: ["10", "20"] }
+  }];
+  const result = harness.api.cloudReconciliation(entries, {
+    connected: true,
+    activeAuctions: [{ auctionKey: "sale-a", mode: "live", label: "Sale A", lots: ["10", "30"] }]
+  }, true);
+  assert.equal(result.totals.local, 2);
+  assert.equal(result.totals.cloud, 2);
+  assert.equal(result.matched, false);
+  assert.equal(result.auctions[0].missingInCloud[0], "20");
+  assert.equal(result.auctions[0].cloudOnly[0], "30");
+});
+
+test("portable backup excludes Pushover and Railway credentials", async () => {
+  const harness = loadBackground();
+  harness.state.settings = {
+    desktopEnabled: true,
+    pushoverEnabled: true,
+    pushoverUserKey: "secret-user",
+    pushoverAppToken: "secret-app",
+    cloudEnabled: true,
+    cloudServiceUrl: "https://watcher.up.railway.app",
+    cloudApiKey: "secret-cloud"
+  };
+  harness.state.auctionConfigs = {
+    "sale-a": { mode: "live", auctionLabel: "Sale A", url: "https://auctions.example.com/bid-live/a/sale/", lots: ["10"], lotOptions: { "10": { stages: [5] } } }
+  };
+  const backup = await harness.api.createBackup();
+  const text = JSON.stringify(backup);
+  assert.equal(backup.format, "easy-live-lot-watcher-backup");
+  assert.match(text, /Sale A/);
+  assert.doesNotMatch(text, /secret-user|secret-app|secret-cloud|watcher\.up\.railway/);
+});
+
+test("backup restore merges watched lots and preserves current secrets", async () => {
+  const harness = loadBackground();
+  harness.state.settings = { cloudApiKey: "keep-me", defaultLiveStages: [5], defaultTimedStagesSeconds: [180] };
+  harness.state.auctionConfigs = {
+    "sale-a": { mode: "live", auctionLabel: "Sale A", url: "https://auctions.example.com/bid-live/a/sale/", lots: ["10"], lotOptions: { "10": { stages: [5] } } }
+  };
+  const result = await harness.api.importBackup({
+    format: "easy-live-lot-watcher-backup", schemaVersion: 1,
+    settings: { defaultLiveStages: [10, 5] },
+    liveAuctions: {
+      "sale-a": { auctionLabel: "Sale A", url: "https://auctions.example.com/bid-live/a/sale/", lots: ["20"], lotOptions: { "20": { stages: [10] } } }
+    },
+    timedAuctions: {}, enabledOrigins: ["https://auctions.example.com"]
+  });
+  assert.equal(result.watchedLots, 1);
+  assert.equal(harness.state.settings.cloudApiKey, "keep-me");
+  assert.equal(harness.state.auctionConfigs["sale-a"].lots.join(","), "10,20");
+});
+
 test("completed live and timed watches are pruned while future lots remain", async () => {
   const harness = loadBackground();
   const liveKey = "https://auctions.example.com::LIVE";
@@ -694,4 +751,20 @@ test("a newly added future lot survives an older completed runtime snapshot", as
   };
   await harness.api.pruneCompletedWatches();
   assert.deepEqual(Array.from(harness.state.timedAuctionConfigs[key].lots), ["20"]);
+});
+
+test("a scheduled catalogue card switches to the Railway live current lot", () => {
+  const harness = loadBackground();
+  const key = "https://auctions.example.com::LIVE";
+  const merged = harness.api.mergeCloudLiveRuntime(
+    key,
+    { mode: "live", auctionLabel: "Sale", lots: ["2846"], url: "https://auctions.example.com/catalogue/LIVE/DAY/sale/" },
+    { mode: "live", auctionKey: key, livePhase: "scheduled", watched: [{ targetLot: "2846", state: "scheduled", stages: [5] }] },
+    { currentLot: "2841", order: ["2841", "2842", "2843", "2844", "2845", "2846"], bidLiveUrl: "https://auctions.example.com/bid-live/LIVE/DAY/sale/", lastSuccessAt: Date.now() }
+  );
+  assert.equal(merged.livePhase, "active");
+  assert.equal(merged.currentLot, "2841");
+  assert.equal(merged.watched[0].remaining, 5);
+  assert.equal(merged.watched[0].statusText, "5 lots away");
+  assert.equal(merged.cloudManaged, true);
 });
