@@ -1,5 +1,5 @@
 import { chromium } from "playwright";
-import { normalizeLot, normalizeTimedLot, parseEasyLiveTime } from "./easy-live.js";
+import { isBidLiveUrl, normalizeLot, normalizeTimedLot, parseEasyLiveTime } from "./easy-live.js";
 
 export class BrowserMonitor {
   constructor({ navigationTimeoutMs = 45000 } = {}) {
@@ -205,13 +205,18 @@ export class BrowserMonitor {
   }
 
   async liveAuction(auction) {
-    const cataloguePage = await this.pageFor(`${auction.auctionKey}:catalogue`, auction.url);
-    await this.waitForCatalogue(cataloguePage);
-    const context = await this.catalogueContext(cataloguePage);
-    const order = await this.catalogueOrder(cataloguePage, context);
-    const bidLiveUrl = auction.bidLiveUrl || context.bidLiveUrl;
+    const directLiveUrl = isBidLiveUrl(auction.url) ? auction.url : "";
+    let context = { label: auction.label, ended: false, bidLiveUrl: "" };
+    let catalogueOrder = [];
+    if (!directLiveUrl) {
+      const cataloguePage = await this.pageFor(`${auction.auctionKey}:catalogue`, auction.url);
+      await this.waitForCatalogue(cataloguePage);
+      context = await this.catalogueContext(cataloguePage);
+      catalogueOrder = await this.catalogueOrder(cataloguePage, context);
+    }
+    const bidLiveUrl = directLiveUrl || auction.bidLiveUrl || context.bidLiveUrl;
     if (!bidLiveUrl) {
-      return { mode: "live", label: context.label || auction.label, scheduled: true, auctionEnded: context.ended, currentLot: "", order };
+      return { mode: "live", label: context.label || auction.label, scheduled: true, auctionEnded: context.ended, currentLot: "", order: catalogueOrder };
     }
     const livePage = await this.pageFor(`${auction.auctionKey}:live`, bidLiveUrl);
     await livePage.waitForLoadState("domcontentloaded");
@@ -221,10 +226,14 @@ export class BrowserMonitor {
       const selectors = ["#bid-live-lot-no .lot-list-popup", "#bid-live-lot-no a", "#bid-live-lot-no"];
       const current = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
       const pageText = document.body?.textContent || "";
+      const order = Array.from(document.querySelectorAll(
+        "#bid-live-lot-section .lot-list-popup, #bid-live-lot-section-more .lot-list-popup"
+      )).map((element) => lotFrom(element.textContent)).filter(Boolean);
       return {
         currentLot: lotFrom(current?.textContent || ""),
         label: normalize(document.querySelector("#bid-live-title strong, #auction-info h4 strong, #bid-live-title")?.textContent || document.title),
-        ended: /\b(?:this\s+)?(?:auction|sale)\s+(?:has\s+|is\s+)?(?:ended|closed|finished|complete)\b/i.test(pageText)
+        ended: /\b(?:this\s+)?(?:auction|sale)\s+(?:has\s+|is\s+)?(?:ended|closed|finished|complete)\b/i.test(pageText),
+        order
       };
     });
     return {
@@ -234,7 +243,7 @@ export class BrowserMonitor {
       auctionEnded: Boolean(context.ended || live.ended),
       currentLot: normalizeLot(live.currentLot),
       bidLiveUrl,
-      order
+      order: catalogueOrder.length ? catalogueOrder : Array.from(new Set(live.order.map(normalizeLot)))
     };
   }
 }

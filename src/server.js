@@ -52,13 +52,23 @@ async function body(request, limit = 1024 * 1024) {
 function publicHealth() {
   const loop = watcher.status();
   const healthyLoop = !loop.lastLoopAt || Date.now() - loop.lastLoopAt < Math.max(5 * 60 * 1000, config.pollIntervalMs * 5);
+  const auctions = Object.values(store.state.auctions);
+  const count = (mode) => auctions.filter((auction) => auction.mode === mode);
+  const liveAuctions = count("live");
+  const timedAuctions = count("timed");
   return {
     ok: missingConfiguration.length === 0 && healthyLoop,
     service: "easy-live-lot-watcher-cloud",
-    version: "1.0.0",
+    version: "1.0.1",
     configured: missingConfiguration.length === 0,
     watcher: loop,
-    auctionCount: Object.keys(store.state.auctions).length,
+    auctionCount: auctions.length,
+    auctionModes: { live: liveAuctions.length, timed: timedAuctions.length },
+    watchedLots: {
+      live: liveAuctions.reduce((total, auction) => total + auction.lots.length, 0),
+      timed: timedAuctions.reduce((total, auction) => total + auction.lots.length, 0),
+      total: auctions.reduce((total, auction) => total + auction.lots.length, 0)
+    },
     serverTime: Date.now()
   };
 }

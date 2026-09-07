@@ -1,6 +1,6 @@
 {
   "name": "easy-live-lot-watcher-cloud",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Always-on public auction monitoring companion for Easy Live Lot Watcher",
   "type": "module",

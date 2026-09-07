@@ -66,6 +66,11 @@ export function validateAuctionUrl(value, allowedHosts) {
   return url.href;
 }
 
+export function isBidLiveUrl(value) {
+  try { return /\/bid-live\//i.test(new URL(value).pathname); }
+  catch (_error) { return false; }
+}
+
 export function dueStage(stages, remaining, alreadyProcessed = new Set()) {
   if (!Number.isFinite(remaining) || remaining < 0) return null;
   return [...new Set((stages || []).map(Number).filter(Number.isFinite))]

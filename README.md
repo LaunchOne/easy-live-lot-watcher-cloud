@@ -2,6 +2,8 @@
 
 An always-on Railway companion for the Easy Live Lot Watcher Chrome extension. It monitors public Easy Live auction pages and sends Pushover alerts while the user's computer is asleep or closed.
 
+Service v1.0.1 monitors live watches whether they were prepared from the scheduled catalogue or added directly from the **Bid Live** page. The public health response includes separate live/timed auction and watched-lot counts for synchronization checks.
+
 ## Safety boundaries
 
 - Public auction information only.
