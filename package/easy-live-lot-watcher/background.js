@@ -1033,6 +1033,61 @@ async function migrateMisclassifiedLiveConfig(payload) {
   return true;
 }
 
+async function migrateMisclassifiedTimedConfig(payload) {
+  const legacyKey = payload?.legacyLiveAuctionKey;
+  if (payload?.mode !== "timed" || !payload.auctionKey || !legacyKey) return false;
+  const settings = await getSettings();
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.configs, STORAGE_KEYS.timedConfigs, STORAGE_KEYS.runtime,
+    STORAGE_KEYS.alerted, STORAGE_KEYS.legacyAlerted
+  ]);
+  const liveConfigs = stored[STORAGE_KEYS.configs] || {};
+  const timedConfigs = stored[STORAGE_KEYS.timedConfigs] || {};
+  const legacy = liveConfigs[legacyKey];
+  if (!legacy) return false;
+  const existing = timedConfigs[payload.auctionKey] || { lots: [], lotOptions: {} };
+  const lots = Array.from(new Set([...(existing.lots || []), ...(legacy.lots || [])].map(normalizeLot)));
+  const lotOptions = { ...(existing.lotOptions || {}) };
+  for (const lot of lots) {
+    const oldOptions = legacy.lotOptions?.[lot] || {};
+    if (!lotOptions[lot]?.stagesSeconds) {
+      lotOptions[lot] = {
+        stagesSeconds: settings.defaultTimedStagesSeconds,
+        importedFromAccount: Boolean(oldOptions.importedFromAccount)
+      };
+    }
+  }
+  timedConfigs[payload.auctionKey] = {
+    ...existing,
+    mode: "timed",
+    auctionId: payload.auctionId || existing.auctionId || legacy.auctionId || "",
+    dayId: payload.dayId || existing.dayId || legacy.dayId || "",
+    auctionLabel: payload.auctionLabel || existing.auctionLabel || legacy.auctionLabel || "Timed auction",
+    url: payload.url || existing.url || legacy.url || "",
+    lots, lotOptions, updatedAt: Date.now()
+  };
+  delete liveConfigs[legacyKey];
+  const liveAlerted = stored[STORAGE_KEYS.alerted] || {};
+  const legacyAlerted = stored[STORAGE_KEYS.legacyAlerted] || {};
+  for (const key of Object.keys(liveAlerted)) if (key.startsWith(`${legacyKey}::`)) delete liveAlerted[key];
+  for (const key of Object.keys(legacyAlerted)) if (key.startsWith(`${legacyKey}::`)) delete legacyAlerted[key];
+  const runtime = stored[STORAGE_KEYS.runtime] || {};
+  delete runtime[legacyKey];
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.configs]: liveConfigs,
+    [STORAGE_KEYS.timedConfigs]: timedConfigs,
+    [STORAGE_KEYS.runtime]: runtime,
+    [STORAGE_KEYS.alerted]: liveAlerted,
+    [STORAGE_KEYS.legacyAlerted]: legacyAlerted
+  });
+  await recordDiagnostic({
+    event: "watch-list-type-corrected",
+    auctionKey: payload.auctionKey,
+    details: { fromAuctionKey: legacyKey, toAuctionKey: payload.auctionKey, fromMode: "live", toMode: "timed", lots }
+  });
+  return true;
+}
+
 async function removeLot({ auctionKey, lot, mode }) {
   const timed = mode === "timed";
   const configKey = timed ? STORAGE_KEYS.timedConfigs : STORAGE_KEYS.configs;
@@ -1927,6 +1982,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       case "PAGE_HEARTBEAT":
         await serializeMutation(async () => {
           await migrateMisclassifiedLiveConfig(message.payload);
+          await migrateMisclassifiedTimedConfig(message.payload);
           await updateRuntime(message.payload, sender, message.type);
           if (message.payload?.mode === "timed") await syncTimedSchedules(message.payload);
         });

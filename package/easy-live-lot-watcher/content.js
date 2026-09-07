@@ -1,7 +1,7 @@
 (function startEasyLiveWatcher() {
   "use strict";
 
-  const CONTENT_VERSION = "0.7.1-live-route-identity";
+  const CONTENT_VERSION = "0.7.2-auction-type-repair";
   if (globalThis.__easyLiveWatcherContentLoaded === CONTENT_VERSION) return;
   globalThis.__easyLiveWatcherContentLoaded = CONTENT_VERSION;
 
@@ -381,11 +381,17 @@
         ? Core.timedAuctionIdentity(location.origin, latestSnapshot?.auctionId || identity.auctionId)
         : null;
       const configSource = scheduledLive ? stored.auctionConfigs : stored.timedAuctionConfigs;
-      const legacyLiveConfig = scheduledLive && legacyTimedIdentity
+      const legacyTimedConfig = scheduledLive && legacyTimedIdentity
         ? (stored.timedAuctionConfigs || {})[legacyTimedIdentity.auctionKey]
         : null;
+      const misclassifiedLiveIdentity = !scheduledLive && identity
+        ? findStoredIdentity(stored.auctionConfigs, "live", [identity.auctionId, latestSnapshot?.auctionId, pageIdentity.auctionId].filter(Boolean))
+        : null;
+      const misclassifiedLiveConfig = misclassifiedLiveIdentity
+        ? (stored.auctionConfigs || {})[misclassifiedLiveIdentity.auctionKey]
+        : null;
       const config = identity
-        ? (configSource || {})[identity.auctionKey] || legacyLiveConfig || { lots: [], lotOptions: {} }
+        ? (configSource || {})[identity.auctionKey] || legacyTimedConfig || misclassifiedLiveConfig || { lots: [], lotOptions: {} }
         : { lots: [], lotOptions: {} };
       const identityDiagnostics = {
         contentVersion: CONTENT_VERSION,
@@ -398,7 +404,7 @@
         resolvedAuctionId: identity?.auctionId || "",
         resolvedDayId: identity?.dayId || "",
         resolvedAuctionKey: identity?.auctionKey || "",
-        savedConfigFound: Boolean(identity && ((configSource || {})[identity.auctionKey] || legacyLiveConfig)),
+        savedConfigFound: Boolean(identity && ((configSource || {})[identity.auctionKey] || legacyTimedConfig || misclassifiedLiveConfig)),
         savedTimedConfigCount: Object.keys(stored.timedAuctionConfigs || {}).length,
         savedLiveConfigCount: Object.keys(stored.auctionConfigs || {}).length
       };
@@ -457,7 +463,7 @@
           lookupError: latestSnapshot?.lookupError || "",
           accountWatchDetected: (latestSnapshot?.lots || []).filter((lot) => lot.accountWatched).length,
           diagnostics: identityDiagnostics,
-          legacyTimedAuctionKey: legacyLiveConfig ? legacyTimedIdentity.auctionKey : "",
+          legacyTimedAuctionKey: legacyTimedConfig ? legacyTimedIdentity.auctionKey : "",
           lastDataChangeAt,
           watched
         };
@@ -523,6 +529,7 @@
         lookupError: latestSnapshot?.lookupError || "",
         accountWatchDetected: (latestSnapshot?.lots || []).filter((lot) => lot.accountWatched).length,
         diagnostics: identityDiagnostics,
+        legacyLiveAuctionKey: misclassifiedLiveConfig ? misclassifiedLiveIdentity.auctionKey : "",
         lastDataChangeAt,
         watched
       };

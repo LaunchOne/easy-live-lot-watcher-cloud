@@ -88,7 +88,7 @@ test("resolves an off-page watched lot through the catalogue data layer", async 
 
   const latest = snapshots.at(-1);
   const watched = latest.lots.find((lot) => lot.lot === "42");
-  assert.equal(latest.bridgeVersion, 11);
+  assert.equal(latest.bridgeVersion, 12);
   assert.equal(latest.lookupState, "ready");
   assert.equal(watched.source, "catalogue-lookup");
   assert.equal(watched.description, "Off-page watched lot");
@@ -151,7 +151,7 @@ test("detects a server-rendered catalogue and resolves a watched lot through its
     document: {
       readyState: "complete",
       documentElement: { textContent: "" },
-      body: { textContent: "Example timed catalogue" },
+      body: { textContent: "Powered by Easy Live Auction. Timed Auction. Auction Ends: 20th Aug 26 from 12pm BST" },
       title: "Example server-rendered timed sale",
       querySelector(selector) { return selector === '[x-data="auctions"]' ? null : null; },
       querySelectorAll(selector) {
@@ -192,7 +192,7 @@ test("detects a server-rendered catalogue and resolves a watched lot through its
 
   const latest = snapshots.at(-1);
   const watched = latest.lots.find((lot) => lot.lot === "225");
-  assert.equal(latest.bridgeVersion, 11);
+  assert.equal(latest.bridgeVersion, 12);
   assert.equal(latest.auctionMode, "timed");
   assert.equal(latest.auctionId, "AUCTION1");
   assert.equal(latest.lookupState, "ready");
@@ -253,7 +253,7 @@ test("an explicitly ended auction stops unresolved catalogue searches", async ()
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   const latest = snapshots.at(-1);
-  assert.equal(latest.bridgeVersion, 11);
+  assert.equal(latest.bridgeVersion, 12);
   assert.equal(latest.auctionEnded, true);
   assert.equal(latest.monitoringComplete, true);
   assert.equal(latest.terminalReason, "auction-ended");
@@ -491,7 +491,7 @@ test("recognises an Alpine live catalogue before the webcast starts", () => {
   vm.runInContext(source, vm.createContext(sandbox));
 
   const latest = snapshots.at(-1);
-  assert.equal(latest.bridgeVersion, 11);
+  assert.equal(latest.bridgeVersion, 12);
   assert.equal(latest.auctionMode, "live");
   assert.equal(latest.liveAuctionId, "auction-live");
   assert.equal(latest.bidLiveUrl, "https://auctions.example.com/bid-live/auction-live/webcast/example-sale/");
@@ -593,7 +593,7 @@ test("derives a Wellers live route from catalogue metadata when no Bid Live anch
   vm.runInContext(source, vm.createContext(sandbox));
 
   const latest = snapshots.at(-1);
-  assert.equal(latest.bridgeVersion, 11);
+  assert.equal(latest.bridgeVersion, 12);
   assert.equal(latest.auctionMode, "live");
   assert.equal(latest.liveAuctionId, "cd43e8f69c615e1b48a69b7c0e0144b1");
   assert.equal(latest.bidLiveUrl,

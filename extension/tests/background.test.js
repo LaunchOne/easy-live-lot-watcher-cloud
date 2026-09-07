@@ -69,7 +69,7 @@ function loadBackground() {
     navigator: { userAgent: "Test Chrome on macOS", language: "en-GB" },
     fetch: async () => ({})
   });
-  vm.runInContext(`${source}\n;globalThis.__test = { syncTimedSchedules, handleTimedAlarm, timedAlarmName, handleThresholdReached, liveStageKey, refreshReliabilityState, migrateMisclassifiedLiveConfig, importAccountWatches, readinessSummary, saveTimedLots, recordDiagnostic, buildIssueReport, checkHealth, buildCloudPayload, pruneCompletedWatches, applyCloudCompletions, mergeCloudLiveRuntime, cloudReconciliation, createBackup, importBackup };`, context);
+  vm.runInContext(`${source}\n;globalThis.__test = { syncTimedSchedules, handleTimedAlarm, timedAlarmName, handleThresholdReached, liveStageKey, refreshReliabilityState, migrateMisclassifiedLiveConfig, migrateMisclassifiedTimedConfig, importAccountWatches, readinessSummary, saveTimedLots, recordDiagnostic, buildIssueReport, checkHealth, buildCloudPayload, pruneCompletedWatches, applyCloudCompletions, mergeCloudLiveRuntime, cloudReconciliation, createBackup, importBackup };`, context);
   return { state, alarms, notifications, tabUpdates, powerEvents, api: context.__test };
 }
 
@@ -483,6 +483,32 @@ test("migrates lots saved under the old timed key when a catalogue is confirmed 
   assert.deepEqual(Array.from(harness.state.auctionConfigs[liveKey].lotOptions["42"].stages), [5]);
   assert.equal(harness.state.timedAlertedStages[`${legacyKey}::42::180`], undefined);
   assert.equal(harness.alarms.has(alarmName), false);
+});
+
+test("migrates a timed auction that was incorrectly saved as live", async () => {
+  const harness = loadBackground();
+  const legacyKey = "https://auctions.example.com::AUCTION-TIMED";
+  const timedKey = "https://auctions.example.com::timed::AUCTION-TIMED";
+  harness.state.settings = { defaultTimedStagesSeconds: [180] };
+  harness.state.auctionConfigs = {
+    [legacyKey]: {
+      mode: "live", auctionId: "AUCTION-TIMED", auctionLabel: "Old timed lot",
+      url: "https://auctions.example.com/catalogue/AUCTION-TIMED/DAY1/sale/",
+      lots: ["115"], lotOptions: { "115": { stages: [5], importedFromAccount: true } }
+    }
+  };
+
+  const migrated = await harness.api.migrateMisclassifiedTimedConfig({
+    mode: "timed", auctionKey: timedKey, legacyLiveAuctionKey: legacyKey,
+    auctionId: "AUCTION-TIMED", dayId: "DAY1", auctionLabel: "Timed sale",
+    url: "https://auctions.example.com/catalogue/AUCTION-TIMED/DAY1/sale/"
+  });
+
+  assert.equal(migrated, true);
+  assert.equal(harness.state.auctionConfigs[legacyKey], undefined);
+  assert.deepEqual(Array.from(harness.state.timedAuctionConfigs[timedKey].lots), ["115"]);
+  assert.deepEqual(Array.from(harness.state.timedAuctionConfigs[timedKey].lotOptions["115"].stagesSeconds), [180]);
+  assert.equal(harness.state.timedAuctionConfigs[timedKey].lotOptions["115"].importedFromAccount, true);
 });
 
 test("imports signed-in account watches once without resetting existing lots", async () => {

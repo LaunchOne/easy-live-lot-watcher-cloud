@@ -1,11 +1,11 @@
 (function installEasyLiveCatalogueBridge() {
   "use strict";
 
-  if (globalThis.__easyLiveCatalogueBridgeInstalledV11) return;
-  globalThis.__easyLiveCatalogueBridgeInstalledV11 = true;
+  if (globalThis.__easyLiveCatalogueBridgeInstalledV12) return;
+  globalThis.__easyLiveCatalogueBridgeInstalledV12 = true;
 
   const SOURCE = "easy-live-lot-watcher";
-  const BRIDGE_VERSION = 11;
+  const BRIDGE_VERSION = 12;
   const xhrLots = new Map();
   const resolvedLots = new Map();
   const lastLookupAt = new Map();
@@ -334,13 +334,13 @@
     const type = String(data?.auction_info?.type || data?.auction_type || "").trim();
     if (/^(?:T|TIMED)$/i.test(type)) return "timed";
     if (/^(?:L|LIVE|W|WEBCAST)$/i.test(type)) return "live";
-    const liveLink = bidLiveDetails(root, auctionId);
-    if (liveLink.bidLiveUrl) return "live";
     const pageText = String(root?.body?.textContent || root?.documentElement?.textContent || "").replace(/\s+/g, " ");
     const metaDescription = String(root?.querySelector?.('meta[name="description" i]')?.getAttribute?.("content") || "");
+    if (/\b(?:timed\s+auction|timed\s+bidding|auction\s+(?:ended|ends)|time\s+remaining)\b/i.test(`${metaDescription} ${pageText}`) || root?.querySelector?.("#timedEndTime")) return "timed";
     if (/\bLIVE\s+AUCTION\b/i.test(metaDescription)) return "live";
-    if (/\b(?:live\s+webcast|live\s+auction|watch\s+live|bid\s+live)\b/i.test(pageText)) return "live";
-    if (/\b(?:timed\s+auction|timed\s+bidding|auction\s+ends|time\s+remaining)\b/i.test(pageText) || root?.querySelector?.("#timedEndTime")) return "timed";
+    const liveLink = bidLiveDetails(root, auctionId);
+    if (liveLink.bidLiveUrl) return "live";
+    if (/\b(?:live\s+webcast|watch\s+live|bid\s+live)\b/i.test(pageText)) return "live";
     return type && !/^(?:T|TIMED)$/i.test(type) ? "live" : "timed";
   }
 

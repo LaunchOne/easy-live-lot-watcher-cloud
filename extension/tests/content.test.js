@@ -125,6 +125,35 @@ test("a new live sale is not merged with an old sale that reuses the auction-hou
   assert.notEqual(status.auctionKey, oldKey);
 });
 
+test("a timed catalogue recovers a watch that an older detector saved as live", async () => {
+  const catalogueUrl = "https://auctions.example.com/catalogue/AUCTION-TIMED/DAY1/timed-sale/";
+  const legacyKey = "https://auctions.example.com::AUCTION-TIMED";
+  const harness = loadCatalogueContent({
+    settings: { defaultTimedStagesSeconds: [180] },
+    auctionConfigs: {
+      [legacyKey]: {
+        mode: "live", auctionId: "AUCTION-TIMED", dayId: "DAY1", url: catalogueUrl,
+        lots: ["115"], lotOptions: { "115": { stages: [5], importedFromAccount: true } }
+      }
+    },
+    timedAuctionConfigs: {}, liveAlertedStages: {}, alertedLots: {}, timedAlertedStages: {}
+  }, catalogueUrl);
+
+  harness.dispatchSnapshot({
+    bridgeVersion: 12, auctionMode: "timed", auctionId: "AUCTION-TIMED",
+    pageKind: "catalogue", pageUrl: catalogueUrl, auctionLabel: "Timed auction",
+    lookupState: "ready", auctionEnded: true,
+    lots: [{ lot: "115", ended: true, confirmedEnded: true, source: "catalogue-page" }]
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const status = harness.pageMessages.filter((message) => message.type === "PAGE_STATUS").at(-1).payload;
+  assert.equal(status.mode, "timed");
+  assert.equal(status.legacyLiveAuctionKey, legacyKey);
+  assert.equal(status.watched[0].targetLot, "115");
+  assert.equal(status.watched[0].state, "ended");
+});
+
 test("a future timed lot remains not started when no deadline is available", async () => {
   const auctionKey = "https://auctions.example.com::timed::TIMED-FUTURE";
   const harness = loadCatalogueContent({

@@ -2,6 +2,8 @@
 
 An always-on Railway companion for the Easy Live Lot Watcher Chrome extension. It monitors public Easy Live auction pages and sends Pushover alerts while the user's computer is asleep or closed.
 
+Service v1.1.2 detects historical timed sales that older extension versions accidentally submitted as live auctions. Explicit **Auction ended**, **Sale ended** and historic **Sold for** evidence retires those records automatically. It also parses sale dates from server-rendered Easy Live pages, including white-label auction-house sites.
+
 Service v1.1.1 derives Easy Live's live-bidding route from the catalogue's unique sale route when the site does not render a visible **Bid Live** link. It reads the current live lot from that page, keeps the extension's live countdown current, and retires live-sale records more than 72 hours after their advertised start. Version 0.7.1 also stops treating the auction-house identifier reused in Wellers URLs as a unique live-sale identity, preventing current and historical auctions from being merged.
 
 Service v1.1.0 monitors live watches whether they were prepared from the scheduled catalogue or added directly from the **Bid Live** page. It records an authenticated Pushover delivery audit for every auction alert and sends one pre-auction warning when a scheduled live feed is still unavailable within 15 minutes of its start. It also removes confirmed-ended timed lots, passed live lots, completed auctions and empty stale records automatically. Public health counts represent active monitoring only and include separate live/timed totals.
@@ -29,7 +31,7 @@ Service v1.1.0 monitors live watches whether they were prepared from the schedul
 
 4. Generate a public Railway domain for the service.
 5. Confirm `https://YOUR-DOMAIN/health` returns JSON with `"ok": true`.
-6. Install extension v0.7.1, enter the Railway URL and `CLOUD_API_KEY`, then use **Save & test cloud**.
+6. Install extension v0.7.2, enter the Railway URL and `CLOUD_API_KEY`, then use **Save & test cloud**.
 
 Do not place secrets in this repository. The `.env.example` file contains names only.
 

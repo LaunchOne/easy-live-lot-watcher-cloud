@@ -64,23 +64,27 @@ export class BrowserMonitor {
       const liveLink = Array.from(document.querySelectorAll('a[href*="/bid-live/"]'))
         .find((link) => /\b(?:bid|watch)\s+live\b/i.test(clean(link.textContent)));
       const metaDescription = clean(document.querySelector('meta[name="description" i]')?.getAttribute("content"));
-      const type = clean(data?.auction_info?.type || data?.auction_type || (/\bLIVE\s+AUCTION\b/i.test(metaDescription) ? "L" : ""));
+      const pageText = clean(document.body?.textContent || "");
+      const metaLive = /\bLIVE\s+AUCTION\b/i.test(metaDescription);
+      const timedPage = /\b(?:TIMED\s+AUCTION|AUCTION\s+(?:ENDED|ENDS)\s*:|TIMED\s+BIDDING)\b/i.test(`${metaDescription} ${pageText}`);
+      const type = clean(data?.auction_info?.type || data?.auction_type || (metaLive ? "L" : timedPage ? "T" : ""));
       const generatedLiveLink = clean(data?.live_bidding_link);
       const isLive = /^(?:L|LIVE|W|WEBCAST)$/i.test(type) || /\bLIVE\s+AUCTION\b/i.test(metaDescription);
       const routeLiveLink = route && isLive
         ? `/bid-live/${route[1]}/${route[2]}/${location.pathname.split("/").filter(Boolean)[3] || "auction"}/`
         : "";
-      const dateText = metaDescription.match(/\bSale\s+Date\s*:\s*([^()]+?)(?=\)|\bBID\b|$)/i)?.[1]?.trim() || "";
+      const dateText = metaDescription.match(/\bSale\s+Date\s*:\s*([^()]+?)(?=\)|\bBID\b|$)/i)?.[1]?.trim() ||
+        pageText.match(/\b(?:Auction\s+(?:Ended|Ends|Starts)|Sale\s+Dates?)\s*:\s*(?:Ended\s+)?(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*([^|]{1,80})/i)?.[1]?.trim() || "";
       const parseMetaDate = (value) => {
-        const match = String(value || "").match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{2,4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+        const match = String(value || "").match(/(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})\s+(\d{2,4})\s+(?:from|at)?\s*(\d{1,2})(?::(\d{2}))?\s*(AM|PM)/i);
         if (!match) return null;
-        const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
-        const month = months.indexOf(match[2].toUpperCase());
-        if (month < 0) return null;
+        const months = { JAN:0,JANUARY:0,FEB:1,FEBRUARY:1,MAR:2,MARCH:2,APR:3,APRIL:3,MAY:4,JUN:5,JUNE:5,JUL:6,JULY:6,AUG:7,AUGUST:7,SEP:8,SEPT:8,SEPTEMBER:8,OCT:9,OCTOBER:9,NOV:10,NOVEMBER:10,DEC:11,DECEMBER:11 };
+        const month = months[match[2].toUpperCase()];
+        if (month === undefined) return null;
         const year = Number(match[3]) < 100 ? 2000 + Number(match[3]) : Number(match[3]);
         let hour = Number(match[4]) % 12;
         if (match[6].toUpperCase() === "PM") hour += 12;
-        return new Date(year, month, Number(match[1]), hour, Number(match[5]), 0).getTime();
+        return new Date(year, month, Number(match[1]), hour, Number(match[5] || 0), 0).getTime();
       };
       const startRaw = data?.auction_info?.start_date_time || data?.auction_info?.start_datetime ||
         data?.auction_info?.start_date || data?.auction_info?.auction_date || dateText || null;
@@ -92,8 +96,8 @@ export class BrowserMonitor {
         startsAt: startRaw,
         startsAtMs: parseMetaDate(startRaw) || null,
         ended: Boolean(data?.auction_ended || data?.is_ended || data?.auction_info?.ended ||
-          /\b(?:this\s+)?(?:auction|sale)\s+(?:has\s+|is\s+)?(?:ended|closed|finished|complete)\b/i.test(document.body?.textContent || "")),
-        bidLiveUrl: liveLink || generatedLiveLink || routeLiveLink
+          /\b(?:this\s+)?(?:auction|sale)\s+(?:has\s+|is\s+)?(?:ended|closed|finished|complete)\b/i.test(pageText)),
+        bidLiveUrl: isLive && (liveLink || generatedLiveLink || routeLiveLink)
           ? new URL(liveLink?.getAttribute("href") || generatedLiveLink || routeLiveLink, location.href).href : "",
         hasLotHandler: typeof globalThis.lotHandler === "function" && Boolean(data)
       };
@@ -198,7 +202,7 @@ export class BrowserMonitor {
     if (!response.ok()) throw new Error(`Lot page returned ${response.status()}.`);
     const html = await response.text();
     const deadlineMatch = html.match(/(?:end_lot_time|data-end-time|datetime)[^>:=]*[>:=]["']?([^"'<}\n]+)/i);
-    const ended = /\b(?:bidding closed|lot ended|lot closed|lot finished)\b/i.test(html);
+    const ended = /\b(?:bidding closed|lot ended|lot closed|lot finished|auction ended|sale ended|sold for)\b/i.test(html);
     return {
       lot: watched.lot,
       deadlineMs: parseEasyLiveTime(deadlineMatch?.[1]?.trim()),
@@ -233,9 +237,10 @@ export class BrowserMonitor {
     const directLiveUrl = isBidLiveUrl(auction.url) ? auction.url : "";
     let context = { label: auction.label, ended: false, bidLiveUrl: "", startsAt: null, startsAtMs: null };
     let catalogueOrder = [];
+    let cataloguePage = null;
     const catalogueUrl = directLiveUrl ? catalogueUrlFromLive(directLiveUrl) : auction.url;
     if (catalogueUrl) {
-      const cataloguePage = await this.pageFor(`${auction.auctionKey}:catalogue`, catalogueUrl);
+      cataloguePage = await this.pageFor(`${auction.auctionKey}:catalogue`, catalogueUrl);
       await this.waitForCatalogue(cataloguePage);
       context = await this.catalogueContext(cataloguePage);
       catalogueOrder = await this.catalogueOrder(cataloguePage, context);
@@ -245,6 +250,21 @@ export class BrowserMonitor {
     const startsAtMs = hasContextStart && Number.isFinite(Number(context.startsAtMs))
       ? Number(context.startsAtMs) : parseEasyLiveTime(context.startsAt);
     const retentionEnded = Number.isFinite(startsAtMs) && Date.now() - startsAtMs > LIVE_AUCTION_RETENTION_MS;
+    if (/^(?:T|TIMED)$/i.test(context.type || "")) {
+      const exactLots = [];
+      for (const watched of auction.lots || []) {
+        const lot = watched.url && cataloguePage
+          ? await this.staticTimedLot(cataloguePage.context(), watched).catch(() => null) : null;
+        if (lot) exactLots.push(lot);
+      }
+      const allEnded = exactLots.length === (auction.lots || []).length && exactLots.length > 0 &&
+        exactLots.every((lot) => lot.confirmedEnded || lot.ended);
+      return {
+        mode: "live", misclassifiedMode: "timed", label: context.label || auction.label,
+        scheduled: !allEnded, auctionEnded: Boolean(context.ended || retentionEnded || allEnded),
+        currentLot: "", startsAtMs, bidLiveUrl: "", order: catalogueOrder, lots: exactLots
+      };
+    }
     if (!bidLiveUrl) {
       return {
         mode: "live", label: context.label || auction.label, scheduled: true,
