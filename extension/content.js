@@ -1,7 +1,7 @@
 (function startEasyLiveWatcher() {
   "use strict";
 
-  const CONTENT_VERSION = "0.5.3-health-warning-throttle";
+  const CONTENT_VERSION = "0.7.1-live-route-identity";
   if (globalThis.__easyLiveWatcherContentLoaded === CONTENT_VERSION) return;
   globalThis.__easyLiveWatcherContentLoaded = CONTENT_VERSION;
 
@@ -272,17 +272,22 @@
           };
         }
       }
-      if (currentDayId) {
-        for (const [auctionKey, config] of Object.entries(configs || {})) {
+      // Easy Live's second route identifier is reused by some auction houses and
+      // cannot identify a live sale. Use it only to recover an individual timed
+      // lot page, and only when it points to exactly one saved auction.
+      if (mode === "timed" && pageIdentity.pageKind === "lot" && currentDayId) {
+        const dayMatches = Object.entries(configs || {}).filter(([, config]) => {
           const savedDayId = Core.normalizeLot(config?.dayId || catalogueDayId(config?.url));
-          if (savedDayId && savedDayId === currentDayId) {
-            return {
-              auctionKey,
-              auctionId: config.auctionId || candidateIds[0] || "",
-              dayId: config.dayId || catalogueDayId(config?.url) || catalogueDayId(location.href),
-              matchedBy: "saved-sale-day"
-            };
-          }
+          return savedDayId && savedDayId === currentDayId;
+        });
+        if (dayMatches.length === 1) {
+          const [auctionKey, config] = dayMatches[0];
+          return {
+            auctionKey,
+            auctionId: config.auctionId || candidateIds[0] || "",
+            dayId: config.dayId || catalogueDayId(config?.url) || catalogueDayId(location.href),
+            matchedBy: "unique-timed-lot-route"
+          };
         }
       }
       if (currentRouteId) {

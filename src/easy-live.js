@@ -71,6 +71,17 @@ export function isBidLiveUrl(value) {
   catch (_error) { return false; }
 }
 
+export function catalogueUrlFromLive(value) {
+  try {
+    const url = new URL(value);
+    if (!/\/bid-live\//i.test(url.pathname)) return "";
+    url.pathname = url.pathname.replace(/\/bid-live\//i, "/catalogue/");
+    url.search = "";
+    url.hash = "";
+    return url.href;
+  } catch (_error) { return ""; }
+}
+
 export function dueStage(stages, remaining, alreadyProcessed = new Set()) {
   if (!Number.isFinite(remaining) || remaining < 0) return null;
   return [...new Set((stages || []).map(Number).filter(Number.isFinite))]

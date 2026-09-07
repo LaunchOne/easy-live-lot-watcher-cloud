@@ -1,11 +1,11 @@
 (function installEasyLiveCatalogueBridge() {
   "use strict";
 
-  if (globalThis.__easyLiveCatalogueBridgeInstalledV10) return;
-  globalThis.__easyLiveCatalogueBridgeInstalledV10 = true;
+  if (globalThis.__easyLiveCatalogueBridgeInstalledV11) return;
+  globalThis.__easyLiveCatalogueBridgeInstalledV11 = true;
 
   const SOURCE = "easy-live-lot-watcher";
-  const BRIDGE_VERSION = 10;
+  const BRIDGE_VERSION = 11;
   const xhrLots = new Map();
   const resolvedLots = new Map();
   const lastLookupAt = new Map();
@@ -43,7 +43,12 @@
       if (!match) return null;
       url.search = "";
       url.hash = "";
-      return { auctionId: normalize(match[1]), rawAuctionId: match[1], catalogueUrl: url.href };
+      const parts = url.pathname.split("/").filter(Boolean);
+      return {
+        auctionId: normalize(match[1]), rawAuctionId: match[1],
+        dayId: normalize(parts[2] || ""), rawDayId: parts[2] || "",
+        slug: parts[3] || "auction", catalogueUrl: url.href
+      };
     } catch (_error) {
       return null;
     }
@@ -298,6 +303,9 @@
       data?.auction_start_time, data?.start_auction_time, data?.start_date, data?.start_time
     ];
     const pageText = String(root?.body?.textContent || root?.documentElement?.textContent || "").replace(/\s+/g, " ").trim();
+    const metaDescription = String(root?.querySelector?.('meta[name="description" i]')?.getAttribute?.("content") || "").replace(/\s+/g, " ").trim();
+    const metaDate = metaDescription.match(/\bSale\s+Date\s*:\s*([^()]+?)(?=\)|\bBID\b|$)/i)?.[1];
+    if (metaDate) candidates.push(metaDate);
     const labelled = pageText.match(/(?:Auction|Sale|Live\s+Bidding|Webcast)\s+(?:Starts?|Opens?|Begins?)(?:\s+at)?\s*:?\s*(.{1,100}?(?:\bBST\b|\bGMT\b|\bUTC\b|\bIST\b|\b(?:am|pm)\b))/i)?.[1];
     if (labelled) candidates.push(labelled);
     for (const candidate of candidates) {
@@ -329,9 +337,25 @@
     const liveLink = bidLiveDetails(root, auctionId);
     if (liveLink.bidLiveUrl) return "live";
     const pageText = String(root?.body?.textContent || root?.documentElement?.textContent || "").replace(/\s+/g, " ");
+    const metaDescription = String(root?.querySelector?.('meta[name="description" i]')?.getAttribute?.("content") || "");
+    if (/\bLIVE\s+AUCTION\b/i.test(metaDescription)) return "live";
     if (/\b(?:live\s+webcast|live\s+auction|watch\s+live|bid\s+live)\b/i.test(pageText)) return "live";
     if (/\b(?:timed\s+auction|timed\s+bidding|auction\s+ends|time\s+remaining)\b/i.test(pageText) || root?.querySelector?.("#timedEndTime")) return "timed";
     return type && !/^(?:T|TIMED)$/i.test(type) ? "live" : "timed";
+  }
+
+  function derivedLiveDetails(data, root, auctionMode, preferredAuctionId = "") {
+    const visible = bidLiveDetails(root, preferredAuctionId);
+    if (visible.bidLiveUrl || auctionMode !== "live") return visible;
+    const generated = absoluteUrl(data?.live_bidding_link || "");
+    const generatedMatch = generated ? new URL(generated, location.origin).pathname.match(/\/bid-live\/([^/]+)/i) : null;
+    if (generatedMatch) return { bidLiveUrl: generated, liveAuctionId: generatedMatch[1] };
+    const route = catalogueRoute(location.href);
+    if (!route?.rawAuctionId || !route.rawDayId) return visible;
+    return {
+      bidLiveUrl: new URL(`/bid-live/${route.rawAuctionId}/${route.rawDayId}/${route.slug}/`, location.origin).href,
+      liveAuctionId: route.rawAuctionId
+    };
   }
 
   function staticCardLot(card, context) {
@@ -465,11 +489,12 @@
     for (const lot of pageLots) combined.set(lot.lot, lot);
     const lots = Array.from(combined.values());
     const auctionId = normalize(data.encrypt_auction_id || pageLots[0]?.auctionId || route?.auctionId);
-    const liveDetails = bidLiveDetails(document, auctionId);
+    const auctionMode = detectAuctionMode(data, document, auctionId);
+    const liveDetails = derivedLiveDetails(data, document, auctionMode, auctionId);
     return addTerminalState({
       bridgeVersion: BRIDGE_VERSION,
       pageKind: "catalogue",
-      auctionMode: detectAuctionMode(data, document, auctionId),
+      auctionMode,
       auctionId,
       liveAuctionId: liveDetails.liveAuctionId || route?.rawAuctionId || "",
       bidLiveUrl: liveDetails.bidLiveUrl,
@@ -485,7 +510,7 @@
     const context = staticCatalogueContext();
     if (!context) return null;
     const auctionMode = detectAuctionMode(null, document, context.auctionId);
-    const liveDetails = bidLiveDetails(document, context.auctionId);
+    const liveDetails = derivedLiveDetails(null, document, auctionMode, context.auctionId);
     const startsAtMs = auctionStartTime(null, document);
     const pageLots = staticCatalogueLots(context);
     const explicitAuctionEnd = pageSaysAuctionEnded(document);

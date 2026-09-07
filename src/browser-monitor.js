@@ -1,5 +1,7 @@
 import { chromium } from "playwright";
-import { isBidLiveUrl, normalizeLot, normalizeTimedLot, parseEasyLiveTime } from "./easy-live.js";
+import { catalogueUrlFromLive, isBidLiveUrl, normalizeLot, normalizeTimedLot, parseEasyLiveTime } from "./easy-live.js";
+
+const LIVE_AUCTION_RETENTION_MS = 72 * 60 * 60 * 1000;
 
 export class BrowserMonitor {
   constructor({ navigationTimeoutMs = 45000 } = {}) {
@@ -61,15 +63,38 @@ export class BrowserMonitor {
       } catch (_error) {}
       const liveLink = Array.from(document.querySelectorAll('a[href*="/bid-live/"]'))
         .find((link) => /\b(?:bid|watch)\s+live\b/i.test(clean(link.textContent)));
+      const metaDescription = clean(document.querySelector('meta[name="description" i]')?.getAttribute("content"));
+      const type = clean(data?.auction_info?.type || data?.auction_type || (/\bLIVE\s+AUCTION\b/i.test(metaDescription) ? "L" : ""));
+      const generatedLiveLink = clean(data?.live_bidding_link);
+      const isLive = /^(?:L|LIVE|W|WEBCAST)$/i.test(type) || /\bLIVE\s+AUCTION\b/i.test(metaDescription);
+      const routeLiveLink = route && isLive
+        ? `/bid-live/${route[1]}/${route[2]}/${location.pathname.split("/").filter(Boolean)[3] || "auction"}/`
+        : "";
+      const dateText = metaDescription.match(/\bSale\s+Date\s*:\s*([^()]+?)(?=\)|\bBID\b|$)/i)?.[1]?.trim() || "";
+      const parseMetaDate = (value) => {
+        const match = String(value || "").match(/^(\d{1,2})\s+([A-Za-z]{3})\s+(\d{2,4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+        if (!match) return null;
+        const months = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+        const month = months.indexOf(match[2].toUpperCase());
+        if (month < 0) return null;
+        const year = Number(match[3]) < 100 ? 2000 + Number(match[3]) : Number(match[3]);
+        let hour = Number(match[4]) % 12;
+        if (match[6].toUpperCase() === "PM") hour += 12;
+        return new Date(year, month, Number(match[1]), hour, Number(match[5]), 0).getTime();
+      };
+      const startRaw = data?.auction_info?.start_date_time || data?.auction_info?.start_datetime ||
+        data?.auction_info?.start_date || data?.auction_info?.auction_date || dateText || null;
       return {
         auctionId: clean(data?.encrypt_auction_id || route?.[1]),
         dayId: clean(data?.encrypt_day_id || route?.[2]),
         label: clean(data?.auction_info?.short_desc || document.querySelector("h1")?.textContent || document.title),
-        type: clean(data?.auction_info?.type || data?.auction_type),
-        startsAt: data?.auction_info?.start_date || data?.auction_info?.auction_date || null,
+        type,
+        startsAt: startRaw,
+        startsAtMs: parseMetaDate(startRaw) || null,
         ended: Boolean(data?.auction_ended || data?.is_ended || data?.auction_info?.ended ||
           /\b(?:this\s+)?(?:auction|sale)\s+(?:has\s+|is\s+)?(?:ended|closed|finished|complete)\b/i.test(document.body?.textContent || "")),
-        bidLiveUrl: liveLink ? new URL(liveLink.getAttribute("href"), location.href).href : "",
+        bidLiveUrl: liveLink || generatedLiveLink || routeLiveLink
+          ? new URL(liveLink?.getAttribute("href") || generatedLiveLink || routeLiveLink, location.href).href : "",
         hasLotHandler: typeof globalThis.lotHandler === "function" && Boolean(data)
       };
     });
@@ -206,20 +231,24 @@ export class BrowserMonitor {
 
   async liveAuction(auction) {
     const directLiveUrl = isBidLiveUrl(auction.url) ? auction.url : "";
-    let context = { label: auction.label, ended: false, bidLiveUrl: "", startsAt: null };
+    let context = { label: auction.label, ended: false, bidLiveUrl: "", startsAt: null, startsAtMs: null };
     let catalogueOrder = [];
-    if (!directLiveUrl) {
-      const cataloguePage = await this.pageFor(`${auction.auctionKey}:catalogue`, auction.url);
+    const catalogueUrl = directLiveUrl ? catalogueUrlFromLive(directLiveUrl) : auction.url;
+    if (catalogueUrl) {
+      const cataloguePage = await this.pageFor(`${auction.auctionKey}:catalogue`, catalogueUrl);
       await this.waitForCatalogue(cataloguePage);
       context = await this.catalogueContext(cataloguePage);
       catalogueOrder = await this.catalogueOrder(cataloguePage, context);
     }
     const bidLiveUrl = directLiveUrl || auction.bidLiveUrl || context.bidLiveUrl;
-    const startsAtMs = parseEasyLiveTime(context.startsAt);
+    const hasContextStart = context.startsAtMs !== null && context.startsAtMs !== undefined && context.startsAtMs !== "";
+    const startsAtMs = hasContextStart && Number.isFinite(Number(context.startsAtMs))
+      ? Number(context.startsAtMs) : parseEasyLiveTime(context.startsAt);
+    const retentionEnded = Number.isFinite(startsAtMs) && Date.now() - startsAtMs > LIVE_AUCTION_RETENTION_MS;
     if (!bidLiveUrl) {
       return {
         mode: "live", label: context.label || auction.label, scheduled: true,
-        auctionEnded: context.ended, currentLot: "", startsAtMs, order: catalogueOrder
+        auctionEnded: Boolean(context.ended || retentionEnded), currentLot: "", startsAtMs, order: catalogueOrder
       };
     }
     const livePage = await this.pageFor(`${auction.auctionKey}:live`, bidLiveUrl);
@@ -244,7 +273,7 @@ export class BrowserMonitor {
       mode: "live",
       label: live.label || context.label || auction.label,
       scheduled: !live.currentLot && !live.ended,
-      auctionEnded: Boolean(context.ended || live.ended),
+      auctionEnded: Boolean(context.ended || live.ended || retentionEnded),
       currentLot: normalizeLot(live.currentLot),
       startsAtMs,
       bidLiveUrl,

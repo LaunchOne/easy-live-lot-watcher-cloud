@@ -60,7 +60,7 @@ function publicHealth() {
   return {
     ok: missingConfiguration.length === 0 && healthyLoop,
     service: "easy-live-lot-watcher-cloud",
-    version: "1.1.0",
+    version: "1.1.1",
     configured: missingConfiguration.length === 0,
     watcher: loop,
     auctionCount: auctions.length,

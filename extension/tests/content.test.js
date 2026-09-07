@@ -90,6 +90,41 @@ test("a pre-live catalogue uses the same live auction key as its Bid Live page",
   assert.match(status.watched[0].statusText, /Live auction starts/);
 });
 
+test("a new live sale is not merged with an old sale that reuses the auction-house route id", async () => {
+  const currentUrl = "https://auctions.example.com/catalogue/NEW-LIVE/HOUSE-ID/current-sale/";
+  const oldKey = "https://auctions.example.com::OLD-LIVE";
+  const harness = loadCatalogueContent({
+    settings: { defaultLiveStages: [5] },
+    auctionConfigs: {
+      [oldKey]: {
+        auctionId: "OLD-LIVE",
+        dayId: "HOUSE-ID",
+        url: "https://auctions.example.com/bid-live/OLD-LIVE/HOUSE-ID/old-sale/",
+        lots: ["900"]
+      }
+    },
+    timedAuctionConfigs: {}, liveAlertedStages: {}, alertedLots: {}, timedAlertedStages: {}
+  }, currentUrl);
+
+  harness.dispatchSnapshot({
+    bridgeVersion: 11,
+    auctionMode: "live",
+    auctionId: "NEW-LIVE",
+    liveAuctionId: "NEW-LIVE",
+    pageKind: "catalogue",
+    pageUrl: currentUrl,
+    auctionLabel: "Current live sale",
+    startsAtMs: Date.now() - 60000,
+    lookupState: "ready",
+    lots: [{ lot: "42", description: "Current sale lot", source: "catalogue-page" }]
+  });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const status = harness.pageMessages.filter((message) => message.type === "PAGE_STATUS").at(-1).payload;
+  assert.equal(status.auctionKey, "https://auctions.example.com::NEW-LIVE");
+  assert.notEqual(status.auctionKey, oldKey);
+});
+
 test("a future timed lot remains not started when no deadline is available", async () => {
   const auctionKey = "https://auctions.example.com::timed::TIMED-FUTURE";
   const harness = loadCatalogueContent({

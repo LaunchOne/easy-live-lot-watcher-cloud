@@ -88,7 +88,7 @@ test("resolves an off-page watched lot through the catalogue data layer", async 
 
   const latest = snapshots.at(-1);
   const watched = latest.lots.find((lot) => lot.lot === "42");
-  assert.equal(latest.bridgeVersion, 10);
+  assert.equal(latest.bridgeVersion, 11);
   assert.equal(latest.lookupState, "ready");
   assert.equal(watched.source, "catalogue-lookup");
   assert.equal(watched.description, "Off-page watched lot");
@@ -192,7 +192,7 @@ test("detects a server-rendered catalogue and resolves a watched lot through its
 
   const latest = snapshots.at(-1);
   const watched = latest.lots.find((lot) => lot.lot === "225");
-  assert.equal(latest.bridgeVersion, 10);
+  assert.equal(latest.bridgeVersion, 11);
   assert.equal(latest.auctionMode, "timed");
   assert.equal(latest.auctionId, "AUCTION1");
   assert.equal(latest.lookupState, "ready");
@@ -253,7 +253,7 @@ test("an explicitly ended auction stops unresolved catalogue searches", async ()
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   const latest = snapshots.at(-1);
-  assert.equal(latest.bridgeVersion, 10);
+  assert.equal(latest.bridgeVersion, 11);
   assert.equal(latest.auctionEnded, true);
   assert.equal(latest.monitoringComplete, true);
   assert.equal(latest.terminalReason, "auction-ended");
@@ -491,7 +491,7 @@ test("recognises an Alpine live catalogue before the webcast starts", () => {
   vm.runInContext(source, vm.createContext(sandbox));
 
   const latest = snapshots.at(-1);
-  assert.equal(latest.bridgeVersion, 10);
+  assert.equal(latest.bridgeVersion, 11);
   assert.equal(latest.auctionMode, "live");
   assert.equal(latest.liveAuctionId, "auction-live");
   assert.equal(latest.bidLiveUrl, "https://auctions.example.com/bid-live/auction-live/webcast/example-sale/");
@@ -550,6 +550,54 @@ test("recognises a server-rendered live webcast catalogue from its Bid Live rout
   assert.equal(latest.auctionMode, "live");
   assert.equal(latest.liveAuctionId, "21de1e2957a0ba6dee26470899e61af7");
   assert.match(latest.bidLiveUrl, /\/bid-live\/21de1e2957a0ba6dee26470899e61af7\//);
+  assert.equal(latest.monitoringComplete, false);
+});
+
+test("derives a Wellers live route from catalogue metadata when no Bid Live anchor is rendered", () => {
+  const snapshots = [];
+  class MockXhr { addEventListener() {} }
+  MockXhr.prototype.open = function open() {};
+  MockXhr.prototype.send = function send() {};
+  const meta = {
+    getAttribute(name) {
+      return name === "content"
+        ? "LIVE AUCTION - customer returns (Sale Date: 7 Sep 26 10:00AM) BID NOW"
+        : "";
+    }
+  };
+  const sandbox = {
+    console, Date, URL, URLSearchParams, XMLHttpRequest: MockXhr,
+    MutationObserver: class { observe() {} },
+    location: {
+      href: "https://auctions.wellersauctions.com/catalogue/cd43e8f69c615e1b48a69b7c0e0144b1/45205ABDBB84D2DF36D33A64CD5790B5/monday-customer-returns/",
+      origin: "https://auctions.wellersauctions.com",
+      pathname: "/catalogue/cd43e8f69c615e1b48a69b7c0e0144b1/45205ABDBB84D2DF36D33A64CD5790B5/monday-customer-returns/"
+    },
+    document: {
+      readyState: "complete",
+      documentElement: { textContent: "Monday customer returns" },
+      body: { textContent: "Monday customer returns" },
+      title: "Monday customer returns",
+      querySelector(selector) { return selector === 'meta[name="description" i]' ? meta : null; },
+      querySelectorAll() { return []; },
+      addEventListener() {}
+    },
+    addEventListener() {},
+    postMessage(message) { if (message?.type === "TIMED_SNAPSHOT") snapshots.push(message.payload); },
+    setInterval() { return 1; }, setTimeout() { return 1; }
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+
+  const source = fs.readFileSync(path.resolve(__dirname, "../page-bridge.js"), "utf8");
+  vm.runInContext(source, vm.createContext(sandbox));
+
+  const latest = snapshots.at(-1);
+  assert.equal(latest.bridgeVersion, 11);
+  assert.equal(latest.auctionMode, "live");
+  assert.equal(latest.liveAuctionId, "cd43e8f69c615e1b48a69b7c0e0144b1");
+  assert.equal(latest.bidLiveUrl,
+    "https://auctions.wellersauctions.com/bid-live/cd43e8f69c615e1b48a69b7c0e0144b1/45205ABDBB84D2DF36D33A64CD5790B5/monday-customer-returns/");
   assert.equal(latest.monitoringComplete, false);
 });
 

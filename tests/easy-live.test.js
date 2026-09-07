@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  dueStage, hostMatches, isBidLiveUrl, liveDistance, normalizeLot, parseEasyLiveTime, sanitizeAuction
+  catalogueUrlFromLive, dueStage, hostMatches, isBidLiveUrl, liveDistance, normalizeLot, parseEasyLiveTime, sanitizeAuction
 } from "../src/easy-live.js";
 
 test("normalizes lettered and labelled lots", () => {
@@ -32,6 +32,13 @@ test("matches explicit and wildcard auction hosts", () => {
 test("distinguishes a direct live feed from a catalogue", () => {
   assert.equal(isBidLiveUrl("https://auctions.example.com/bid-live/auction-id/sale/"), true);
   assert.equal(isBidLiveUrl("https://auctions.example.com/catalogue/auction-id/day/sale/"), false);
+});
+
+test("derives the matching catalogue from a direct live feed", () => {
+  assert.equal(
+    catalogueUrlFromLive("https://auctions.example.com/bid-live/AUCTION/DAY/sale/?current=12#lot"),
+    "https://auctions.example.com/catalogue/AUCTION/DAY/sale/"
+  );
 });
 
 test("sanitizes extension auction configuration", () => {

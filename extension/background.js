@@ -1716,7 +1716,7 @@ async function getDashboard() {
       healthProblem: monitoringComplete ? "" : cloudReadiness?.status === "warning"
         ? "Scheduled live feed has not appeared yet"
         : warnings[entry.auctionKey]?.problem || "",
-      lastSeen: status?.lastSeen || null,
+      lastSeen: cloudFresh ? Number(cloudRuntime.lastSuccessAt || cloudRuntime.lastCheckedAt || status?.lastSeen || 0) : status?.lastSeen || null,
       currentLot: status?.currentLot || "",
       watched: (status?.watched || (entry.config.lots || []).map((targetLot) => ({ targetLot, state: "waiting", statusText: "Waiting for auction tab" })))
         .map((item) => ({ ...item, urgency: urgencyScore(entry.mode, item) }))
