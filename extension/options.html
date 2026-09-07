@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Easy Live Lot Watcher Settings</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main class="page">
+      <header>
+        <div class="brand-mark" aria-hidden="true">5</div>
+        <div>
+          <span class="eyebrow">Easy Live Auction</span>
+          <h1>Lot Watcher settings</h1>
+          <p>Choose default alerts and how this Mac protects active monitoring.</p>
+        </div>
+      </header>
+
+      <section class="card">
+        <div class="section-heading">
+          <div><span class="step">01</span><h2>Default alert stages</h2></div>
+          <p>New watched lots use these stages. Each stage sends once, even if a timed deadline is extended.</p>
+        </div>
+        <div class="timing-grid">
+          <fieldset>
+            <legend>Live webcast lots</legend>
+            <label class="choice-row"><input id="liveStage10" type="checkbox"><span><strong>10 lots away</strong><small>Early warning</small></span></label>
+            <label class="choice-row"><input id="liveStage5" type="checkbox" checked><span><strong>5 lots away</strong><small>Recommended primary alert</small></span></label>
+            <label class="choice-row"><input id="liveStage0" type="checkbox"><span><strong>Live now</strong><small>Final alert when the lot starts</small></span></label>
+          </fieldset>
+          <fieldset>
+            <legend>Timed auction lots</legend>
+            <label class="choice-row"><input id="timedStage600" type="checkbox"><span><strong>10 minutes</strong><small>Early warning</small></span></label>
+            <label class="choice-row"><input id="timedStage180" type="checkbox" checked><span><strong>3 minutes</strong><small>Recommended primary alert</small></span></label>
+            <label class="choice-row"><input id="timedStage30" type="checkbox"><span><strong>30 seconds</strong><small>Final alert before closing</small></span></label>
+          </fieldset>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div><span class="step">02</span><h2>Auction-account watches</h2></div>
+          <p>When you are signed in, lots marked <strong>Watching</strong> on an Easy Live catalogue or lot page can be added automatically.</p>
+        </div>
+        <label class="toggle-row" for="accountWatchImportEnabled">
+          <span><strong>Import watched lots automatically</strong><small>One-way import only. The extension never reads or stores your auction-house password.</small></span>
+          <input id="accountWatchImportEnabled" type="checkbox" checked>
+        </label>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div><span class="step">03</span><h2>Reliability mode</h2></div>
+          <p>Active auction tabs are protected from automatic discarding and macOS inactivity sleep. Protection releases automatically when monitoring completes.</p>
+        </div>
+        <label class="toggle-row" for="reliabilityMode">
+          <span><strong>Protect active monitoring</strong><small>The display may turn off; the Mac and Chrome keep running.</small></span>
+          <input id="reliabilityMode" type="checkbox" checked>
+        </label>
+        <label class="toggle-row separated" for="autoRecoveryEnabled">
+          <span><strong>Reload an unresponsive background tab</strong><small>Off by default. The extension warns first and never reloads the tab you are viewing.</small></span>
+          <input id="autoRecoveryEnabled" type="checkbox">
+        </label>
+        <label for="disconnectWarningMinutes" class="number-row">
+          Connection warning delay
+          <span class="compact-field"><input id="disconnectWarningMinutes" type="number" min="1" max="15" step="1" value="2"><span>minutes</span></span>
+        </label>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div><span class="step">04</span><h2>Railway cloud monitoring</h2></div>
+          <p>Keep receiving Pushover alerts when Chrome or this Mac is closed. Only public auction URLs, lot numbers and alert stages are synchronized.</p>
+        </div>
+        <label class="toggle-row" for="cloudEnabled">
+          <span><strong>Use always-on cloud monitoring</strong><small>Railway handles phone alerts; the extension still shows desktop alerts while Chrome is open.</small></span>
+          <input id="cloudEnabled" type="checkbox">
+        </label>
+        <div class="credentials-grid">
+          <label for="cloudServiceUrl">Railway service URL<input id="cloudServiceUrl" type="url" autocomplete="off" placeholder="https://your-service.up.railway.app"></label>
+          <label for="cloudApiKey">Cloud API key<input id="cloudApiKey" type="password" autocomplete="off" placeholder="Your Railway CLOUD_API_KEY"></label>
+        </div>
+        <div class="link-row">
+          <span id="cloudStatus" class="cloud-status">Not connected</span>
+          <button id="testCloud" class="secondary-button compact-button" type="button">Save & test cloud</button>
+          <button id="toggleCloudSecret" class="text-button" type="button">Show key</button>
+        </div>
+        <p class="fine-print">Auction-house passwords, cookies, bids, payment information and Pushover credentials stored in Chrome are never sent to Railway.</p>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div><span class="step">05</span><h2>Desktop alerts</h2></div>
+          <p>Shown by Chrome on this Mac. Clicking an auction alert opens the live bidding page or exact timed lot.</p>
+        </div>
+        <label class="toggle-row" for="desktopEnabled">
+          <span><strong>Show desktop notifications</strong><small>Alerts remain visible until dismissed where supported.</small></span>
+          <input id="desktopEnabled" type="checkbox" checked>
+        </label>
+      </section>
+
+      <section class="card">
+        <div class="section-heading">
+          <div><span class="step">06</span><h2>Pushover phone alerts</h2></div>
+          <p>These keys are used for local monitoring. Cloud monitoring uses the same keys entered privately in Railway.</p>
+        </div>
+        <label class="toggle-row" for="pushoverEnabled">
+          <span><strong>Send Pushover notifications</strong><small>Install Pushover on your phone before testing.</small></span>
+          <input id="pushoverEnabled" type="checkbox">
+        </label>
+        <div class="credentials-grid">
+          <label for="pushoverUserKey">Pushover User Key<input id="pushoverUserKey" type="password" autocomplete="off" placeholder="Your user key"></label>
+          <label for="pushoverAppToken">Application API Token<input id="pushoverAppToken" type="password" autocomplete="off" placeholder="Your app token"></label>
+        </div>
+        <label for="pushoverPriority">Phone alert priority</label>
+        <select id="pushoverPriority">
+          <option value="1">High — bypass quiet hours where allowed</option>
+          <option value="0">Normal</option>
+        </select>
+        <div class="link-row">
+          <a href="https://pushover.net/" target="_blank" rel="noreferrer">Open Pushover dashboard ↗</a>
+          <button id="toggleSecrets" class="text-button" type="button">Show keys</button>
+        </div>
+      </section>
+
+      <section class="awake-card">
+        <strong id="monitoringLimitTitle">Local monitoring limit</strong>
+        <p id="monitoringLimitText">Without Railway enabled, keep one auction tab open with Chrome and the Mac running. With Railway connected, Pushover monitoring continues when the Mac is closed.</p>
+      </section>
+
+      <div class="action-row">
+        <p id="statusMessage" role="status"></p>
+        <button id="testAlerts" class="secondary-button" type="button">Save & test alerts</button>
+        <button id="saveSettings" class="primary-button" type="button">Save settings</button>
+      </div>
+
+      <p class="version">Easy Live Lot Watcher v0.6.0 · Optional Railway monitoring with local desktop fallback.</p>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>

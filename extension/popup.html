@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Easy Live Lot Watcher</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="brand-row">
+        <div class="brand-mark" aria-hidden="true"><span></span>5</div>
+        <div class="brand-copy">
+          <h1>Lot Watcher</h1>
+          <p>Live and timed auction alerts</p>
+        </div>
+        <button id="readinessIndicator" class="readiness-indicator idle" type="button" title="Readiness status" aria-label="Readiness status: checking">
+          <span class="readiness-orb" aria-hidden="true"></span>
+          <span id="readinessLabel">Checking</span>
+        </button>
+        <button id="openSettings" class="icon-button" type="button" aria-label="Open settings" title="Settings">⚙</button>
+      </header>
+
+      <nav class="view-tabs" aria-label="Watcher views">
+        <button id="currentTabButton" class="view-tab active" type="button" aria-pressed="true">Current auction</button>
+        <button id="dashboardTabButton" class="view-tab" type="button" aria-pressed="false">All watches</button>
+      </nav>
+
+      <div id="currentView">
+        <section id="unsupportedView" class="panel state-panel hidden">
+          <div class="state-icon" aria-hidden="true">↗</div>
+          <span class="eyebrow">No auction detected</span>
+          <h2>Open an auction page</h2>
+          <p>Use an Easy Live “Watch Live” page or a timed sale’s main catalogue. Your existing watches remain under <strong>All watches</strong>.</p>
+          <button id="showAllWatches" class="secondary-button" type="button">View all watches</button>
+        </section>
+
+        <section id="enableView" class="panel state-panel hidden">
+          <div class="state-icon permission" aria-hidden="true">✓</div>
+          <span class="eyebrow">Compatible page found</span>
+          <h2>Enable this auction site</h2>
+          <p id="enableHost" class="host"></p>
+          <button id="enableSite" class="primary-button" type="button">Enable monitoring</button>
+          <p class="fine-print">Permission applies only to this auction house’s website.</p>
+        </section>
+
+        <section id="auctionView" class="hidden">
+          <section class="auction-hero">
+            <div class="auction-hero-copy">
+              <div class="hero-meta">
+                <span id="summaryEyebrow" class="mode-pill">Monitoring</span>
+                <span id="connectionBadge" class="status-badge neutral">Connecting</span>
+              </div>
+              <h2 id="auctionLabel">Live auction</h2>
+              <p id="healthDetail">Waiting for the first update</p>
+            </div>
+            <div class="current-lot">
+              <span id="summaryMetricLabel">Current lot</span>
+              <strong id="currentLot">—</strong>
+            </div>
+          </section>
+
+          <section class="panel add-panel">
+            <div class="section-title-row">
+              <div>
+                <span class="eyebrow">Add a watch</span>
+                <label id="lotInputLabel" for="lotInput">Lots to watch</label>
+              </div>
+            </div>
+            <p id="fieldHelp" class="field-help">Enter one or more lot numbers, separated by commas.</p>
+            <div class="input-row">
+              <input id="lotInput" type="text" autocomplete="off" placeholder="e.g. 125, 208A">
+              <button id="addLots" class="primary-button" type="button">Add lots</button>
+            </div>
+            <p id="formMessage" class="form-message" role="status" aria-live="polite"></p>
+          </section>
+
+          <section class="panel watch-panel">
+            <div class="panel-title-row">
+              <div>
+                <span id="watchEyebrow" class="eyebrow">Your watch list</span>
+                <h2 id="watchHeading">Approaching lots</h2>
+              </div>
+              <span id="thresholdBadge" class="count-badge">0 watched</span>
+            </div>
+            <div id="watchList" class="watch-list"></div>
+            <div id="emptyState" class="empty-state">
+              <span aria-hidden="true">＋</span>
+              <strong>No watched lots yet</strong>
+              <p>Add lot numbers above and they will appear here in urgency order.</p>
+            </div>
+          </section>
+
+          <details id="readinessDisclosure" class="panel utility-disclosure">
+            <summary>
+              <span><strong>Pre-auction readiness</strong><small id="healthText">Check connection, alerts and sleep protection</small></span>
+              <span class="summary-action">Open</span>
+            </summary>
+            <div class="disclosure-content">
+              <p>Run this shortly before bidding. It sends a real desktop alert and a Pushover alert when enabled.</p>
+              <button id="readinessTest" class="secondary-button" type="button">Run readiness test</button>
+              <div id="readinessResults" class="readiness-results hidden" aria-live="polite"></div>
+            </div>
+          </details>
+
+          <footer id="footerText">Keep this auction tab open. Reliability mode keeps the Mac awake while monitoring.</footer>
+        </section>
+
+        <section id="loadingView" class="panel loading-view">
+          <span class="spinner" aria-hidden="true"></span>
+          <div><strong>Checking this tab</strong><p>Connecting to the auction page…</p></div>
+        </section>
+      </div>
+
+      <section id="dashboardView" class="hidden">
+        <section class="dashboard-header">
+          <div>
+            <span class="eyebrow">Unified dashboard</span>
+            <h2 id="dashboardHeading">All watched auctions</h2>
+          </div>
+          <span id="reliabilityBadge" class="protection-badge">Checking protection…</span>
+        </section>
+
+        <section id="nextUpPanel" class="next-up-card hidden">
+          <div class="next-up-label"><span class="pulse-dot"></span>Next up</div>
+          <div class="next-up-main">
+            <div>
+              <strong id="nextUpLot">Lot —</strong>
+              <span id="nextUpAuction">Auction</span>
+            </div>
+            <span id="nextUpStatus" class="next-up-status">Waiting</span>
+          </div>
+          <button id="nextUpOpen" class="inverse-button" type="button">Open auction</button>
+        </section>
+
+        <div id="dashboardList" class="dashboard-list"></div>
+
+        <details id="historyDisclosure" class="panel utility-disclosure history-panel">
+          <summary>
+            <span><strong>Recent alert history</strong><small id="historySummary">Local delivery and connection log</small></span>
+            <span class="summary-action">Open</span>
+          </summary>
+          <div class="disclosure-content">
+            <div id="historyList" class="history-list"></div>
+            <div id="historyEmpty" class="empty-state compact">
+              <strong>No history yet</strong>
+              <p>Alerts, tests, extensions and connection events will appear here.</p>
+            </div>
+          </div>
+        </details>
+      </section>
+
+      <details id="issueReportDisclosure" class="panel utility-disclosure issue-report-panel">
+        <summary>
+          <span><strong>Report an issue</strong><small>Capture a sanitized extension-state report</small></span>
+          <span class="summary-action">Open</span>
+        </summary>
+        <div class="disclosure-content">
+          <p>Create this immediately after a problem occurs, then attach the JSON file in ChatGPT. It includes watched lot numbers and auction page paths, but excludes passwords, cookies, payment details and Pushover credentials.</p>
+          <div class="report-actions">
+            <button id="createIssueReport" class="secondary-button" type="button">Download issue report</button>
+            <button id="copyIssueReport" class="text-button" type="button" disabled>Copy report</button>
+          </div>
+          <p id="issueReportMessage" class="form-message" role="status" aria-live="polite"></p>
+        </div>
+      </details>
+    </main>
+    <script src="core.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

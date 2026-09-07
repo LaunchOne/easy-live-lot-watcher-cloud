@@ -1,0 +1,17 @@
+{
+  "name": "easy-live-lot-watcher-cloud",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Always-on public auction monitoring companion for Easy Live Lot Watcher",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "playwright": "1.55.0"
+  }
+}
