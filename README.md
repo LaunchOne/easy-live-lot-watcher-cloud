@@ -2,7 +2,7 @@
 
 An always-on Railway companion for the Easy Live Lot Watcher Chrome extension. It monitors public Easy Live auction pages and sends Pushover alerts while the user's computer is asleep or closed.
 
-Service v1.1.5 reads Easy Live's internal live-lot state when the visible heading is empty and resets a post-start live feed that stops reporting its current lot. Extension v0.7.4 prevents individual lot pages from ending an entire timed catalogue, retains alert de-duplication after completion, and blocks completed or manually removed account watches from being imported again. Service v1.1.4 added automatic recovery from crashed Chromium pages, and v1.1.3 added the three-minute watchdog.
+Service v1.1.6 waits for the live page to finish bootstrapping and uses Easy Live's read-only WebSocket as a fallback when the visible current-lot heading is empty. Service v1.1.5 added post-start feed recovery. Extension v0.7.4 prevents individual lot pages from ending an entire timed catalogue, retains alert de-duplication after completion, and blocks completed or manually removed account watches from being imported again. Service v1.1.4 added automatic recovery from crashed Chromium pages, and v1.1.3 added the three-minute watchdog.
 
 Service v1.1.2 detects historical timed sales that older extension versions accidentally submitted as live auctions. Explicit **Auction ended**, **Sale ended** and historic **Sold for** evidence retires those records automatically. It also parses sale dates from server-rendered Easy Live pages, including white-label auction-house sites.
 
