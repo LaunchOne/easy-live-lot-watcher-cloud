@@ -1,7 +1,8 @@
 import { chromium } from "playwright";
-import { catalogueUrlFromLive, isBidLiveUrl, normalizeLot, normalizeTimedLot, parseEasyLiveTime } from "./easy-live.js";
+import { catalogueUrlFromLive, isBidLiveUrl, liveFeedExpected, normalizeLot, normalizeTimedLot, parseEasyLiveTime } from "./easy-live.js";
 
 const LIVE_AUCTION_RETENTION_MS = 72 * 60 * 60 * 1000;
+const LIVE_FEED_START_GRACE_MS = 10 * 60 * 1000;
 
 export class BrowserMonitor {
   constructor({ navigationTimeoutMs = 45000 } = {}) {
@@ -279,22 +280,36 @@ export class BrowserMonitor {
       const selectors = ["#bid-live-lot-no .lot-list-popup", "#bid-live-lot-no a", "#bid-live-lot-no"];
       const current = selectors.map((selector) => document.querySelector(selector)).find(Boolean);
       const pageText = document.body?.textContent || "";
+      const liveState = globalThis.elaLive || {};
+      const currentState = liveState.CurrentLot || {};
+      const auctionState = liveState.Auction || {};
+      const stateLot = normalize(currentState.lotno || currentState.lot_no || currentState.lot_number || "");
+      const stateStatus = normalize(auctionState.status || auctionState.state || auctionState.auction_status || "");
       const order = Array.from(document.querySelectorAll(
         "#bid-live-lot-section .lot-list-popup, #bid-live-lot-section-more .lot-list-popup"
       )).map((element) => lotFrom(element.textContent)).filter(Boolean);
       return {
         currentLot: lotFrom(current?.textContent || ""),
+        stateLot,
         label: normalize(document.querySelector("#bid-live-title strong, #auction-info h4 strong, #bid-live-title")?.textContent || document.title),
-        ended: /\b(?:this\s+)?(?:auction|sale)\s+(?:has\s+|is\s+)?(?:ended|closed|finished|complete)\b/i.test(pageText),
+        ended: /\b(?:this\s+)?(?:auction|sale)\s+(?:has\s+|is\s+)?(?:ended|closed|finished|complete)\b/i.test(pageText) ||
+          /^(?:ended|closed|finished|complete|completed)$/i.test(stateStatus),
         order
       };
     });
+    const currentLot = normalizeLot(live.currentLot || live.stateLot);
+    const feedShouldBeActive = liveFeedExpected(
+      startsAtMs, Date.now(), LIVE_FEED_START_GRACE_MS, context.ended || live.ended || retentionEnded
+    );
+    if (feedShouldBeActive && !currentLot) {
+      throw new Error("Live auction has started but the current lot feed is unavailable.");
+    }
     return {
       mode: "live",
       label: live.label || context.label || auction.label,
-      scheduled: !live.currentLot && !live.ended,
+      scheduled: !currentLot && !live.ended,
       auctionEnded: Boolean(context.ended || live.ended || retentionEnded),
-      currentLot: normalizeLot(live.currentLot),
+      currentLot,
       startsAtMs,
       bidLiveUrl,
       order: catalogueOrder.length ? catalogueOrder : Array.from(new Set(live.order.map(normalizeLot)))

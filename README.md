@@ -2,7 +2,7 @@
 
 An always-on Railway companion for the Easy Live Lot Watcher Chrome extension. It monitors public Easy Live auction pages and sends Pushover alerts while the user's computer is asleep or closed.
 
-Service v1.1.4 also discards a browser session immediately when Chromium reports a crashed or otherwise failed auction page, allowing the next check to start with a clean page. Service v1.1.3 introduced the three-minute watchdog that prevents one unresponsive auction page from blocking every cloud watch. The public health response identifies this condition directly, and extension v0.7.3 displays a useful Railway health message instead of the misleading **Railway returned HTTP 200**.
+Service v1.1.5 reads Easy Live's internal live-lot state when the visible heading is empty and resets a post-start live feed that stops reporting its current lot. Extension v0.7.4 prevents individual lot pages from ending an entire timed catalogue, retains alert de-duplication after completion, and blocks completed or manually removed account watches from being imported again. Service v1.1.4 added automatic recovery from crashed Chromium pages, and v1.1.3 added the three-minute watchdog.
 
 Service v1.1.2 detects historical timed sales that older extension versions accidentally submitted as live auctions. Explicit **Auction ended**, **Sale ended** and historic **Sold for** evidence retires those records automatically. It also parses sale dates from server-rendered Easy Live pages, including white-label auction-house sites.
 
@@ -34,7 +34,7 @@ Service v1.1.0 monitors live watches whether they were prepared from the schedul
 
 4. Generate a public Railway domain for the service.
 5. Confirm `https://YOUR-DOMAIN/health` returns JSON with `"ok": true`.
-6. Install extension v0.7.3, enter the Railway URL and `CLOUD_API_KEY`, then use **Save & test cloud**.
+6. Install extension v0.7.4, enter the Railway URL and `CLOUD_API_KEY`, then use **Save & test cloud**.
 
 Do not place secrets in this repository. The `.env.example` file contains names only.
 

@@ -1,11 +1,11 @@
 (function installEasyLiveCatalogueBridge() {
   "use strict";
 
-  if (globalThis.__easyLiveCatalogueBridgeInstalledV12) return;
-  globalThis.__easyLiveCatalogueBridgeInstalledV12 = true;
+  if (globalThis.__easyLiveCatalogueBridgeInstalledV13) return;
+  globalThis.__easyLiveCatalogueBridgeInstalledV13 = true;
 
   const SOURCE = "easy-live-lot-watcher";
-  const BRIDGE_VERSION = 12;
+  const BRIDGE_VERSION = 13;
   const xhrLots = new Map();
   const resolvedLots = new Map();
   const lastLookupAt = new Map();
@@ -579,7 +579,7 @@
       pageUrl: location.href,
       pageLot: lotNumber,
       lots
-    }, lots, pageSaysAuctionEnded(document));
+    }, lots, false);
   }
 
   function scan(force = false) {
@@ -647,7 +647,6 @@
       return;
     }
     const parsed = new DOMParser().parseFromString(html, "text/html");
-    if (pageSaysAuctionEnded(parsed)) auctionEnded = true;
     const found = staticIndividualLot(parsed, resolvedUrl, context.auctionId);
     if (found?.lot === lotNumber) rememberResolvedLot(lotNumber, found, true);
     else rememberMissingLot(lotNumber, true);

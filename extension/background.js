@@ -34,7 +34,8 @@ const STORAGE_KEYS = {
   history: "alertHistory",
   healthWarnings: "healthWarnings",
   diagnostics: "diagnosticLog",
-  cloudStatus: "cloudStatus"
+  cloudStatus: "cloudStatus",
+  completedWatches: "completedWatchTombstones"
 };
 
 const HEALTH_ALARM = "easy-live-health-check";
@@ -44,6 +45,7 @@ const HEALTH_RECOVERY_RESET_MS = 10 * 60 * 1000;
 const HEALTH_MAX_NOTIFICATIONS = 2;
 const DIAGNOSTIC_LIMIT = 200;
 const CLOUD_STATUS_REFRESH_MS = 15 * 1000;
+const COMPLETED_WATCH_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 const BACKUP_FORMAT = "easy-live-lot-watcher-backup";
 let mutationQueue = Promise.resolve();
 let powerHeld = false;
@@ -60,6 +62,16 @@ function hashText(text) {
   let hash = 5381;
   for (let index = 0; index < text.length; index += 1) hash = ((hash << 5) + hash) ^ text.charCodeAt(index);
   return (hash >>> 0).toString(36);
+}
+
+function completedWatchKey(auctionKey, lot) {
+  return `${auctionKey}::${normalizeLot(lot)}`;
+}
+
+function currentCompletedWatches(value, now = Date.now()) {
+  return Object.fromEntries(Object.entries(value || {}).filter(([, item]) =>
+    now - Number(item?.completedAt || 0) < COMPLETED_WATCH_RETENTION_MS
+  ));
 }
 
 function scriptId(origin) {
@@ -244,7 +256,7 @@ async function pruneCompletedWatches() {
   const stored = await chrome.storage.local.get([
     STORAGE_KEYS.configs, STORAGE_KEYS.timedConfigs, STORAGE_KEYS.runtime,
     STORAGE_KEYS.alerted, STORAGE_KEYS.legacyAlerted, STORAGE_KEYS.timedAlerted,
-    STORAGE_KEYS.timedAlarmIndex, STORAGE_KEYS.healthWarnings
+    STORAGE_KEYS.timedAlarmIndex, STORAGE_KEYS.healthWarnings, STORAGE_KEYS.completedWatches
   ]);
   const liveConfigs = { ...(stored[STORAGE_KEYS.configs] || {}) };
   const timedConfigs = { ...(stored[STORAGE_KEYS.timedConfigs] || {}) };
@@ -254,6 +266,7 @@ async function pruneCompletedWatches() {
   const timedAlerted = { ...(stored[STORAGE_KEYS.timedAlerted] || {}) };
   const alarmIndex = { ...(stored[STORAGE_KEYS.timedAlarmIndex] || {}) };
   const warnings = { ...(stored[STORAGE_KEYS.healthWarnings] || {}) };
+  const completedWatches = currentCompletedWatches(stored[STORAGE_KEYS.completedWatches]);
   const removed = [];
 
   for (const [mode, configs] of [["live", liveConfigs], ["timed", timedConfigs]]) {
@@ -271,9 +284,7 @@ async function pruneCompletedWatches() {
       if (!removedLots.length && remainingLots.length === originalLots.length && remainingLots.length) continue;
 
       for (const lot of removedLots) {
-        for (const key of Object.keys(liveAlerted)) if (key.startsWith(`${auctionKey}::${lot}::`)) delete liveAlerted[key];
-        delete legacyAlerted[`${auctionKey}::${lot}`];
-        for (const key of Object.keys(timedAlerted)) if (key.startsWith(`${auctionKey}::${lot}::`)) delete timedAlerted[key];
+        completedWatches[completedWatchKey(auctionKey, lot)] = { completedAt: Date.now(), mode };
         for (const [alarmName, scheduled] of Object.entries(alarmIndex)) {
           if (scheduled.auctionKey === auctionKey && normalizeLot(scheduled.targetLot) === lot) {
             await chrome.alarms.clear(alarmName);
@@ -309,7 +320,8 @@ async function pruneCompletedWatches() {
     [STORAGE_KEYS.legacyAlerted]: legacyAlerted,
     [STORAGE_KEYS.timedAlerted]: timedAlerted,
     [STORAGE_KEYS.timedAlarmIndex]: alarmIndex,
-    [STORAGE_KEYS.healthWarnings]: warnings
+    [STORAGE_KEYS.healthWarnings]: warnings,
+    [STORAGE_KEYS.completedWatches]: completedWatches
   });
   for (const item of removed) {
     await recordDiagnostic({
@@ -864,10 +876,13 @@ async function updateRuntime(payload, sender, source = "PAGE_STATUS") {
 
 async function saveLots({ auctionKey, auctionId, dayId, auctionLabel, url, lots, stages }) {
   const settings = await getSettings();
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.configs, STORAGE_KEYS.alerted, STORAGE_KEYS.legacyAlerted]);
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.configs, STORAGE_KEYS.alerted, STORAGE_KEYS.legacyAlerted, STORAGE_KEYS.completedWatches
+  ]);
   const configs = stored[STORAGE_KEYS.configs] || {};
   const alerted = stored[STORAGE_KEYS.alerted] || {};
   const legacy = stored[STORAGE_KEYS.legacyAlerted] || {};
+  const completedWatches = currentCompletedWatches(stored[STORAGE_KEYS.completedWatches]);
   const existing = configs[auctionKey] || { lots: [], lotOptions: {} };
   const normalizedLots = lots.map(normalizeLot);
   const nextLots = Array.from(new Set([...(existing.lots || []), ...normalizedLots]));
@@ -876,6 +891,7 @@ async function saveLots({ auctionKey, auctionId, dayId, auctionLabel, url, lots,
     lotOptions[lot] = lotOptions[lot] || { stages: normalizeLiveStages(stages, settings.defaultLiveStages) };
     for (const key of Object.keys(alerted)) if (key.startsWith(`${auctionKey}::${lot}::`)) delete alerted[key];
     delete legacy[`${auctionKey}::${lot}`];
+    delete completedWatches[completedWatchKey(auctionKey, lot)];
   }
   configs[auctionKey] = {
     ...existing,
@@ -891,7 +907,8 @@ async function saveLots({ auctionKey, auctionId, dayId, auctionLabel, url, lots,
   await chrome.storage.local.set({
     [STORAGE_KEYS.configs]: configs,
     [STORAGE_KEYS.alerted]: alerted,
-    [STORAGE_KEYS.legacyAlerted]: legacy
+    [STORAGE_KEYS.legacyAlerted]: legacy,
+    [STORAGE_KEYS.completedWatches]: completedWatches
   });
   await refreshReliabilityState();
   return configs[auctionKey];
@@ -900,9 +917,12 @@ async function saveLots({ auctionKey, auctionId, dayId, auctionLabel, url, lots,
 async function saveTimedLots({ auctionKey, auctionId, dayId, auctionLabel, url, lots, stagesSeconds }) {
   if (!auctionKey) throw new Error("The timed auction has not finished loading yet.");
   const settings = await getSettings();
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.timedConfigs, STORAGE_KEYS.timedAlerted]);
+  const stored = await chrome.storage.local.get([
+    STORAGE_KEYS.timedConfigs, STORAGE_KEYS.timedAlerted, STORAGE_KEYS.completedWatches
+  ]);
   const configs = stored[STORAGE_KEYS.timedConfigs] || {};
   const alerted = stored[STORAGE_KEYS.timedAlerted] || {};
+  const completedWatches = currentCompletedWatches(stored[STORAGE_KEYS.completedWatches]);
   const existing = configs[auctionKey] || { lots: [], lotOptions: {} };
   const normalizedLots = lots.map(normalizeLot);
   const nextLots = Array.from(new Set([...(existing.lots || []), ...normalizedLots]));
@@ -912,6 +932,7 @@ async function saveTimedLots({ auctionKey, auctionId, dayId, auctionLabel, url, 
       stagesSeconds: normalizeTimedStages(stagesSeconds, settings.defaultTimedStagesSeconds)
     };
     for (const key of Object.keys(alerted)) if (key.startsWith(`${auctionKey}::${lot}::`)) delete alerted[key];
+    delete completedWatches[completedWatchKey(auctionKey, lot)];
   }
   configs[auctionKey] = {
     ...existing,
@@ -924,7 +945,11 @@ async function saveTimedLots({ auctionKey, auctionId, dayId, auctionLabel, url, 
     lotOptions,
     updatedAt: Date.now()
   };
-  await chrome.storage.local.set({ [STORAGE_KEYS.timedConfigs]: configs, [STORAGE_KEYS.timedAlerted]: alerted });
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.timedConfigs]: configs,
+    [STORAGE_KEYS.timedAlerted]: alerted,
+    [STORAGE_KEYS.completedWatches]: completedWatches
+  });
   await recordDiagnostic({
     event: "timed-watch-saved",
     auctionKey,
@@ -947,12 +972,15 @@ async function importAccountWatches({ mode, auctionKey, auctionId, dayId, auctio
   if (!settings.accountWatchImportEnabled) return { added: 0, disabled: true };
   const timed = mode === "timed";
   const configKey = timed ? STORAGE_KEYS.timedConfigs : STORAGE_KEYS.configs;
-  const stored = await chrome.storage.local.get(configKey);
+  const stored = await chrome.storage.local.get([configKey, STORAGE_KEYS.completedWatches]);
   const configs = stored[configKey] || {};
   const existing = configs[auctionKey] || { lots: [], lotOptions: {} };
   const currentLots = new Set((existing.lots || []).map(normalizeLot));
+  const completedWatches = currentCompletedWatches(stored[STORAGE_KEYS.completedWatches]);
   const detected = Array.from(new Set((lots || []).map(normalizeLot).filter(Boolean)));
-  const addedLots = detected.filter((lot) => !currentLots.has(lot));
+  const addedLots = detected.filter((lot) =>
+    !currentLots.has(lot) && !completedWatches[completedWatchKey(auctionKey, lot)]
+  );
   if (!addedLots.length) return { added: 0, total: currentLots.size };
   const lotOptions = { ...(existing.lotOptions || {}) };
   for (const lot of addedLots) {
@@ -1108,10 +1136,13 @@ async function removeLot({ auctionKey, lot, mode }) {
   const timed = mode === "timed";
   const configKey = timed ? STORAGE_KEYS.timedConfigs : STORAGE_KEYS.configs;
   const alertedKey = timed ? STORAGE_KEYS.timedAlerted : STORAGE_KEYS.alerted;
-  const stored = await chrome.storage.local.get([configKey, alertedKey, STORAGE_KEYS.timedAlarmIndex]);
+  const stored = await chrome.storage.local.get([
+    configKey, alertedKey, STORAGE_KEYS.timedAlarmIndex, STORAGE_KEYS.completedWatches
+  ]);
   const configs = stored[configKey] || {};
   const alerted = stored[alertedKey] || {};
   const alarmIndex = stored[STORAGE_KEYS.timedAlarmIndex] || {};
+  const completedWatches = currentCompletedWatches(stored[STORAGE_KEYS.completedWatches]);
   const target = normalizeLot(lot);
   if (configs[auctionKey]) {
     configs[auctionKey].lots = (configs[auctionKey].lots || []).filter((value) => value !== target);
@@ -1119,13 +1150,19 @@ async function removeLot({ auctionKey, lot, mode }) {
     configs[auctionKey].updatedAt = Date.now();
   }
   for (const key of Object.keys(alerted)) if (key.startsWith(`${auctionKey}::${target}::`)) delete alerted[key];
+  completedWatches[completedWatchKey(auctionKey, target)] = { completedAt: Date.now(), mode: timed ? "timed" : "live", removedManually: true };
   for (const [alarmName, item] of Object.entries(alarmIndex)) {
     if (item.auctionKey === auctionKey && item.targetLot === target) {
       await chrome.alarms.clear(alarmName);
       delete alarmIndex[alarmName];
     }
   }
-  await chrome.storage.local.set({ [configKey]: configs, [alertedKey]: alerted, [STORAGE_KEYS.timedAlarmIndex]: alarmIndex });
+  await chrome.storage.local.set({
+    [configKey]: configs,
+    [alertedKey]: alerted,
+    [STORAGE_KEYS.timedAlarmIndex]: alarmIndex,
+    [STORAGE_KEYS.completedWatches]: completedWatches
+  });
   await refreshReliabilityState();
   return configs[auctionKey] || null;
 }
@@ -1865,7 +1902,8 @@ async function buildIssueReport({ auctionKey = "" } = {}) {
       timedAuctionCount: Object.keys(stored[STORAGE_KEYS.timedConfigs] || {}).length,
       runtimeAuctionCount: Object.keys(stored[STORAGE_KEYS.runtime] || {}).length,
       historyCount: (stored[STORAGE_KEYS.history] || []).length,
-      diagnosticEventCount: (stored[STORAGE_KEYS.diagnostics] || []).length
+      diagnosticEventCount: (stored[STORAGE_KEYS.diagnostics] || []).length,
+      completedWatchCount: Object.keys(stored[STORAGE_KEYS.completedWatches] || {}).length
     },
     liveAuctionConfigs: stored[STORAGE_KEYS.configs] || {},
     timedAuctionConfigs: stored[STORAGE_KEYS.timedConfigs] || {},
@@ -1874,6 +1912,7 @@ async function buildIssueReport({ auctionKey = "" } = {}) {
     legacyLiveAlerted: stored[STORAGE_KEYS.legacyAlerted] || {},
     timedAlertedStages: stored[STORAGE_KEYS.timedAlerted] || {},
     timedAlarmIndex: stored[STORAGE_KEYS.timedAlarmIndex] || {},
+    completedWatchTombstones: stored[STORAGE_KEYS.completedWatches] || {},
     scheduledAlarms: alarms,
     healthWarnings: stored[STORAGE_KEYS.healthWarnings] || {},
     cloudStatus: (() => {

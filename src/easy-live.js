@@ -111,6 +111,11 @@ export function liveDistance(current, target, order = []) {
   return Number.isFinite(currentNumber) && Number.isFinite(targetNumber) ? targetNumber - currentNumber : null;
 }
 
+export function liveFeedExpected(startsAtMs, now = Date.now(), graceMs = 10 * 60 * 1000, ended = false) {
+  const start = Number(startsAtMs);
+  return !ended && Number.isFinite(start) && now >= start + graceMs;
+}
+
 export function sanitizeAuction(input, allowedHosts) {
   const mode = input?.mode === "live" ? "live" : input?.mode === "timed" ? "timed" : "";
   if (!mode) throw new Error("Auction mode must be live or timed.");

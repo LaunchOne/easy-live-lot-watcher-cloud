@@ -88,7 +88,7 @@ test("resolves an off-page watched lot through the catalogue data layer", async 
 
   const latest = snapshots.at(-1);
   const watched = latest.lots.find((lot) => lot.lot === "42");
-  assert.equal(latest.bridgeVersion, 12);
+  assert.equal(latest.bridgeVersion, 13);
   assert.equal(latest.lookupState, "ready");
   assert.equal(watched.source, "catalogue-lookup");
   assert.equal(watched.description, "Off-page watched lot");
@@ -192,7 +192,7 @@ test("detects a server-rendered catalogue and resolves a watched lot through its
 
   const latest = snapshots.at(-1);
   const watched = latest.lots.find((lot) => lot.lot === "225");
-  assert.equal(latest.bridgeVersion, 12);
+  assert.equal(latest.bridgeVersion, 13);
   assert.equal(latest.auctionMode, "timed");
   assert.equal(latest.auctionId, "AUCTION1");
   assert.equal(latest.lookupState, "ready");
@@ -253,12 +253,75 @@ test("an explicitly ended auction stops unresolved catalogue searches", async ()
   await new Promise((resolve) => setTimeout(resolve, 20));
 
   const latest = snapshots.at(-1);
-  assert.equal(latest.bridgeVersion, 12);
+  assert.equal(latest.bridgeVersion, 13);
   assert.equal(latest.auctionEnded, true);
   assert.equal(latest.monitoringComplete, true);
   assert.equal(latest.terminalReason, "auction-ended");
   assert.equal(latest.lookupState, "ended");
   assert.equal(fetchCount, 0);
+});
+
+test("an ended individual lot does not close the whole timed catalogue", async () => {
+  const listeners = {};
+  const snapshots = [];
+  class MockXhr { addEventListener() {} }
+  MockXhr.prototype.open = function open() {};
+  MockXhr.prototype.send = function send() {};
+  const lotId = { value: "LOT10" };
+  const lotNumber = { textContent: "Lot 10" };
+  const countdown = { textContent: "Ended" };
+  const registration = { getAttribute(name) { return name === "href" ? "/auction-registration/AUCTION1/" : ""; } };
+  const sandbox = {
+    console,
+    Date,
+    URL,
+    URLSearchParams,
+    XMLHttpRequest: MockXhr,
+    MutationObserver: class { observe() {} },
+    location: {
+      href: "https://auctions.example.com/catalogue/lot/LOT10/DAY1/example-lot-10/",
+      origin: "https://auctions.example.com",
+      pathname: "/catalogue/lot/LOT10/DAY1/example-lot-10/"
+    },
+    document: {
+      readyState: "complete",
+      documentElement: { textContent: "This auction has ended" },
+      body: { textContent: "This auction has ended" },
+      title: "Ended lot in an active timed auction",
+      querySelector(selector) {
+        if (selector === "#lotID, .lotID") return lotId;
+        if (selector === ".currentPage") return lotNumber;
+        if (selector === "#timedEndTime") return countdown;
+        if (selector === 'a[href*="/auction-registration/"]') return registration;
+        return null;
+      },
+      querySelectorAll() { return []; },
+      addEventListener() {}
+    },
+    addEventListener(type, listener) { listeners[type] = listener; },
+    postMessage(message) { if (message?.type === "TIMED_SNAPSHOT") snapshots.push(message.payload); },
+    setInterval() { return 1; },
+    setTimeout(callback) { Promise.resolve().then(callback); return 1; }
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+
+  const source = fs.readFileSync(path.resolve(__dirname, "../page-bridge.js"), "utf8");
+  const context = vm.createContext(sandbox);
+  vm.runInContext(source, context);
+  sandbox.__messageListener = listeners.message;
+  vm.runInContext(`__messageListener({
+    source: window,
+    data: { source: "easy-live-lot-watcher", type: "SET_TIMED_WATCH_LOTS", payload: { lots: ["10", "20"] } }
+  })`, context);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const latest = snapshots.at(-1);
+  assert.equal(latest.bridgeVersion, 13);
+  assert.equal(latest.pageKind, "lot");
+  assert.equal(latest.auctionEnded, false);
+  assert.equal(latest.monitoringComplete, false);
+  assert.equal(latest.lots[0].confirmedEnded, true);
 });
 
 test("confirmed ended watched lots are not looked up again", async () => {
@@ -491,7 +554,7 @@ test("recognises an Alpine live catalogue before the webcast starts", () => {
   vm.runInContext(source, vm.createContext(sandbox));
 
   const latest = snapshots.at(-1);
-  assert.equal(latest.bridgeVersion, 12);
+  assert.equal(latest.bridgeVersion, 13);
   assert.equal(latest.auctionMode, "live");
   assert.equal(latest.liveAuctionId, "auction-live");
   assert.equal(latest.bidLiveUrl, "https://auctions.example.com/bid-live/auction-live/webcast/example-sale/");
@@ -593,7 +656,7 @@ test("derives a Wellers live route from catalogue metadata when no Bid Live anch
   vm.runInContext(source, vm.createContext(sandbox));
 
   const latest = snapshots.at(-1);
-  assert.equal(latest.bridgeVersion, 12);
+  assert.equal(latest.bridgeVersion, 13);
   assert.equal(latest.auctionMode, "live");
   assert.equal(latest.liveAuctionId, "cd43e8f69c615e1b48a69b7c0e0144b1");
   assert.equal(latest.bidLiveUrl,

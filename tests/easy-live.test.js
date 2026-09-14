@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  catalogueUrlFromLive, dueStage, hostMatches, isBidLiveUrl, liveDistance, normalizeLot, parseEasyLiveTime, sanitizeAuction
+  catalogueUrlFromLive, dueStage, hostMatches, isBidLiveUrl, liveDistance, liveFeedExpected, normalizeLot, parseEasyLiveTime, sanitizeAuction
 } from "../src/easy-live.js";
 
 test("normalizes lettered and labelled lots", () => {
@@ -39,6 +39,13 @@ test("derives the matching catalogue from a direct live feed", () => {
     catalogueUrlFromLive("https://auctions.example.com/bid-live/AUCTION/DAY/sale/?current=12#lot"),
     "https://auctions.example.com/catalogue/AUCTION/DAY/sale/"
   );
+});
+
+test("expects a current-lot feed after the live-auction start grace period", () => {
+  const start = 1_000_000;
+  assert.equal(liveFeedExpected(start, start + 9 * 60 * 1000), false);
+  assert.equal(liveFeedExpected(start, start + 10 * 60 * 1000), true);
+  assert.equal(liveFeedExpected(start, start + 60 * 60 * 1000, 10 * 60 * 1000, true), false);
 });
 
 test("sanitizes extension auction configuration", () => {

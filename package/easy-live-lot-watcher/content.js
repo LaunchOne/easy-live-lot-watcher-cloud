@@ -1,7 +1,7 @@
 (function startEasyLiveWatcher() {
   "use strict";
 
-  const CONTENT_VERSION = "0.7.2-auction-type-repair";
+  const CONTENT_VERSION = "0.7.4-completion-reimport-guard";
   if (globalThis.__easyLiveWatcherContentLoaded === CONTENT_VERSION) return;
   globalThis.__easyLiveWatcherContentLoaded = CONTENT_VERSION;
 

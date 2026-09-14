@@ -566,6 +566,46 @@ test("imports signed-in account watches once without resetting existing lots", a
   assert.match(harness.state.alertHistory[0].title, /Imported 1 watched lot/);
 });
 
+test("completed account watches are not automatically imported again", async () => {
+  const harness = loadBackground();
+  const auctionKey = "https://auctions.example.com::timed::AUTO-WATCH";
+  harness.state.settings = {
+    accountWatchImportEnabled: true,
+    defaultLiveStages: [5],
+    defaultTimedStagesSeconds: [180]
+  };
+  harness.state.completedWatchTombstones = {
+    [`${auctionKey}::10`]: { completedAt: Date.now(), mode: "timed" }
+  };
+
+  const result = await harness.api.importAccountWatches({
+    mode: "timed", auctionKey, auctionId: "AUTO-WATCH",
+    url: "https://auctions.example.com/catalogue/AUTO-WATCH/DAY1/sale/",
+    lots: ["10", "20"]
+  });
+
+  assert.equal(result.added, 1);
+  assert.deepEqual(Array.from(harness.state.timedAuctionConfigs[auctionKey].lots), ["20"]);
+});
+
+test("manually adding a completed lot clears its account-import tombstone", async () => {
+  const harness = loadBackground();
+  const auctionKey = "https://auctions.example.com::timed::AUTO-WATCH";
+  harness.state.settings = { defaultTimedStagesSeconds: [180] };
+  harness.state.completedWatchTombstones = {
+    [`${auctionKey}::10`]: { completedAt: Date.now(), mode: "timed" }
+  };
+
+  await harness.api.saveTimedLots({
+    auctionKey, auctionId: "AUTO-WATCH",
+    url: "https://auctions.example.com/catalogue/AUTO-WATCH/DAY1/sale/",
+    lots: ["10"]
+  });
+
+  assert.equal(harness.state.completedWatchTombstones[`${auctionKey}::10`], undefined);
+  assert.deepEqual(Array.from(harness.state.timedAuctionConfigs[auctionKey].lots), ["10"]);
+});
+
 test("automatic readiness summary distinguishes ready waiting and locating states", async () => {
   const harness = loadBackground();
   const auctionKey = "https://auctions.example.com::timed::FUTURE";
@@ -759,11 +799,15 @@ test("completed live and timed watches are pruned while future lots remain", asy
       { targetLot: "50", state: "not-started" }
     ] }
   };
+  harness.state.timedAlertedStages = { [`${timedKey}::30::180`]: { status: "sent" } };
 
   const result = await harness.api.pruneCompletedWatches();
   assert.equal(result.changed, true);
   assert.deepEqual(Array.from(harness.state.auctionConfigs[liveKey].lots), ["20"]);
   assert.deepEqual(Array.from(harness.state.timedAuctionConfigs[timedKey].lots), ["40", "50"]);
+  assert.equal(harness.state.completedWatchTombstones[`${liveKey}::10`].mode, "live");
+  assert.equal(harness.state.completedWatchTombstones[`${timedKey}::30`].mode, "timed");
+  assert.equal(harness.state.timedAlertedStages[`${timedKey}::30::180`].status, "sent");
 });
 
 test("cloud completion tombstones remove local watches before the next payload", async () => {
