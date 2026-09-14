@@ -2,7 +2,7 @@
 
 An always-on Railway companion for the Easy Live Lot Watcher Chrome extension. It monitors public Easy Live auction pages and sends Pushover alerts while the user's computer is asleep or closed.
 
-Service v1.1.3 prevents one unresponsive auction page from blocking every cloud watch. Each auction check has a three-minute watchdog; a stalled browser page is closed, the incident is recorded, and the loop continues to the next auction. The public health response now identifies this condition directly, and extension v0.7.3 displays a useful Railway health message instead of the misleading **Railway returned HTTP 200**.
+Service v1.1.4 also discards a browser session immediately when Chromium reports a crashed or otherwise failed auction page, allowing the next check to start with a clean page. Service v1.1.3 introduced the three-minute watchdog that prevents one unresponsive auction page from blocking every cloud watch. The public health response identifies this condition directly, and extension v0.7.3 displays a useful Railway health message instead of the misleading **Railway returned HTTP 200**.
 
 Service v1.1.2 detects historical timed sales that older extension versions accidentally submitted as live auctions. Explicit **Auction ended**, **Sale ended** and historic **Sold for** evidence retires those records automatically. It also parses sale dates from server-rendered Easy Live pages, including white-label auction-house sites.
 

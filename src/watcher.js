@@ -91,6 +91,7 @@ export class Watcher {
         }
       });
     } catch (error) {
+      await this.resetAuctionPages(auction.auctionKey);
       await this.handleFailure(auction, error);
     } finally {
       this.currentAuctionKey = "";
@@ -115,18 +116,17 @@ export class Watcher {
     });
     try {
       return await Promise.race([monitoring, timeout]);
-    } catch (error) {
-      if (error?.code === "AUCTION_CHECK_TIMEOUT") {
-        await Promise.allSettled([
-          this.monitor.closeAuction(auction.auctionKey),
-          this.monitor.closeAuction(`${auction.auctionKey}:catalogue`),
-          this.monitor.closeAuction(`${auction.auctionKey}:live`)
-        ]);
-      }
-      throw error;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async resetAuctionPages(auctionKey) {
+    await Promise.allSettled([
+      this.monitor.closeAuction(auctionKey),
+      this.monitor.closeAuction(`${auctionKey}:catalogue`),
+      this.monitor.closeAuction(`${auctionKey}:live`)
+    ]);
   }
 
   isComplete(auction, snapshot) {

@@ -35,6 +35,31 @@ test("a stalled auction page is reset without blocking the watcher loop", async 
   assert.equal(f.state.incidents.stalled.notificationCount, 1);
 });
 
+test("a crashed auction page is discarded and the next check can recover", async () => {
+  const f = fixture();
+  const auction = {
+    auctionKey: "crashed", mode: "live", updatedAt: 1,
+    label: "Live sale", url: "https://example/bid-live/crashed", lots: [{ lot: "10", stages: [5] }]
+  };
+  f.state.auctions.crashed = auction;
+  let attempts = 0;
+  f.watcher.monitor.liveAuction = async () => {
+    attempts += 1;
+    if (attempts === 1) throw new Error("page.evaluate: Target crashed");
+    return { mode: "live", auctionEnded: false, currentLot: "1", order: ["1", "10"] };
+  };
+
+  await f.watcher.run();
+  assert.match(f.state.runtime.crashed.error, /Target crashed/);
+  assert.deepEqual(f.closed, ["crashed", "crashed:catalogue", "crashed:live"]);
+
+  f.setNow(1_030_000);
+  await f.watcher.run();
+  assert.equal(f.state.runtime.crashed.error, "");
+  assert.equal(f.state.runtime.crashed.lastSuccessAt, 1_030_000);
+  assert.equal(attempts, 2);
+});
+
 test("timed stages send once and do not re-arm after an extension", async () => {
   const f = fixture();
   const auction = { auctionKey: "a", mode: "timed", label: "Sale", url: "https://example", lots: [{ lot: "10", stages: [180], url: "" }] };
