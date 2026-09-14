@@ -69,9 +69,21 @@ function loadBackground() {
     navigator: { userAgent: "Test Chrome on macOS", language: "en-GB" },
     fetch: async () => ({})
   });
-  vm.runInContext(`${source}\n;globalThis.__test = { syncTimedSchedules, handleTimedAlarm, timedAlarmName, handleThresholdReached, liveStageKey, refreshReliabilityState, migrateMisclassifiedLiveConfig, migrateMisclassifiedTimedConfig, importAccountWatches, readinessSummary, saveTimedLots, recordDiagnostic, buildIssueReport, checkHealth, buildCloudPayload, pruneCompletedWatches, applyCloudCompletions, mergeCloudLiveRuntime, cloudReconciliation, createBackup, importBackup };`, context);
+  vm.runInContext(`${source}\n;globalThis.__test = { syncTimedSchedules, handleTimedAlarm, timedAlarmName, handleThresholdReached, liveStageKey, refreshReliabilityState, migrateMisclassifiedLiveConfig, migrateMisclassifiedTimedConfig, importAccountWatches, readinessSummary, saveTimedLots, recordDiagnostic, buildIssueReport, checkHealth, buildCloudPayload, pruneCompletedWatches, applyCloudCompletions, mergeCloudLiveRuntime, cloudReconciliation, createBackup, importBackup, railwayResponseError };`, context);
   return { state, alarms, notifications, tabUpdates, powerEvents, api: context.__test };
 }
+
+test("explains a stalled Railway checker instead of reporting HTTP 200 as the error", () => {
+  const harness = loadBackground();
+  const error = harness.api.railwayResponseError({ ok: true, status: 200 }, {
+    ok: false,
+    configured: true,
+    watcher: { checking: true, lastLoopAt: 1_000_000 },
+    serverTime: 1_400_001
+  });
+  assert.match(error, /auction checker appears to be stuck/i);
+  assert.doesNotMatch(error, /HTTP 200/i);
+});
 
 test("schedules a timed alert and moves it when the deadline is extended", async () => {
   const harness = loadBackground();

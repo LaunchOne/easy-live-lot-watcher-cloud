@@ -345,6 +345,21 @@ function normalizeCloudServiceUrl(value) {
   return url.href.replace(/\/$/, "");
 }
 
+function railwayResponseError(response, result = {}) {
+  if (!response?.ok) return result.error || `Railway returned HTTP ${response?.status || "unknown"}.`;
+  if (result.ok !== false) return "";
+  if (result.healthProblem) return String(result.healthProblem);
+  if (result.configured === false) return "Railway is missing one or more required configuration values.";
+  const watcher = result.watcher || {};
+  const serverTime = Number(result.serverTime || Date.now());
+  const lastLoopAt = Number(watcher.lastProgressAt || watcher.currentCheckStartedAt || watcher.lastLoopAt || watcher.lastLoopCompletedAt || 0);
+  const staleAfterMs = Math.max(5 * 60 * 1000, Number(watcher.checkTimeoutMs || 0) + 60 * 1000);
+  if (watcher.checking && lastLoopAt && serverTime - lastLoopAt > staleAfterMs) {
+    return "Railway's auction checker appears to be stuck. Alerts may be delayed while it restarts.";
+  }
+  return result.error || "Railway monitoring reported an unhealthy state. Alerts may be delayed.";
+}
+
 async function cloudRequest(path, options = {}) {
   const settings = await getSettings();
   if (!settings.cloudEnabled) throw new Error("Cloud monitoring is not enabled.");
@@ -361,7 +376,8 @@ async function cloudRequest(path, options = {}) {
     }
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok || result.ok === false) throw new Error(result.error || `Railway returned HTTP ${response.status}.`);
+  const problem = railwayResponseError(response, result);
+  if (problem) throw new Error(problem);
   return result;
 }
 

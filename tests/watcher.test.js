@@ -4,16 +4,36 @@ import { Watcher } from "../src/watcher.js";
 
 function fixture(now = 1_000_000) {
   const sent = [];
+  const closed = [];
   const state = { auctions: {}, runtime: {}, alerts: {}, incidents: {}, readiness: {}, events: [], revision: 0 };
   const store = {
     state,
     event(type, details, level = "info") { state.events.push({ type, details, level }); },
     async mutate(action) { return action(state); }
   };
-  const monitor = { async closeAuction() {}, async stop() {} };
+  const monitor = { async closeAuction(key) { closed.push(key); }, async stop() {} };
   const pushover = { async send(payload) { sent.push(payload); return { status: 1, request: `request-${sent.length}` }; } };
-  return { watcher: new Watcher({ store, monitor, pushover, now: () => now }), state, sent, setNow(value) { now = value; } };
+  return { watcher: new Watcher({ store, monitor, pushover, now: () => now }), state, sent, closed, setNow(value) { now = value; } };
 }
+
+test("a stalled auction page is reset without blocking the watcher loop", async () => {
+  const f = fixture();
+  const auction = {
+    auctionKey: "stalled", mode: "timed", updatedAt: 1,
+    label: "Stalled sale", url: "https://example/catalogue/stalled", lots: [{ lot: "10", stages: [180] }]
+  };
+  f.state.auctions.stalled = auction;
+  f.watcher.checkTimeoutMs = 20;
+  f.watcher.monitor.timedAuction = async () => new Promise(() => {});
+
+  await f.watcher.run();
+
+  assert.equal(f.watcher.running, false);
+  assert.equal(f.watcher.lastLoopCompletedAt, 1_000_000);
+  assert.match(f.state.runtime.stalled.error, /timed out after 1 second/i);
+  assert.deepEqual(f.closed, ["stalled", "stalled:catalogue", "stalled:live"]);
+  assert.equal(f.state.incidents.stalled.notificationCount, 1);
+});
 
 test("timed stages send once and do not re-arm after an extension", async () => {
   const f = fixture();

@@ -15,16 +15,20 @@ function formatTimedStage(seconds) {
 }
 
 export class Watcher {
-  constructor({ store, monitor, pushover, pollIntervalMs = 30000, now = () => Date.now() }) {
+  constructor({ store, monitor, pushover, pollIntervalMs = 30000, checkTimeoutMs = 180000, now = () => Date.now() }) {
     this.store = store;
     this.monitor = monitor;
     this.pushover = pushover;
     this.pollIntervalMs = pollIntervalMs;
+    this.checkTimeoutMs = checkTimeoutMs;
     this.now = now;
     this.timer = null;
     this.running = false;
     this.lastLoopAt = null;
     this.lastLoopCompletedAt = null;
+    this.lastProgressAt = null;
+    this.currentAuctionKey = "";
+    this.currentCheckStartedAt = null;
   }
 
   start() {
@@ -44,6 +48,7 @@ export class Watcher {
     if (this.running) return;
     this.running = true;
     this.lastLoopAt = this.now();
+    this.lastProgressAt = this.lastLoopAt;
     try {
       for (const auction of Object.values(this.store.state.auctions)) {
         if (!auction.lots?.length) continue;
@@ -59,9 +64,10 @@ export class Watcher {
     const previous = this.store.state.runtime[auction.auctionKey] || {};
     if (previous.monitoringComplete && previous.configUpdatedAt === auction.updatedAt) return;
     try {
-      const rawSnapshot = auction.mode === "timed"
-        ? await this.monitor.timedAuction(auction)
-        : await this.monitor.liveAuction(auction);
+      this.currentAuctionKey = auction.auctionKey;
+      this.currentCheckStartedAt = this.now();
+      this.lastProgressAt = this.currentCheckStartedAt;
+      const rawSnapshot = await this.monitorWithTimeout(auction);
       const snapshot = this.confirmTerminalLots(rawSnapshot, previous);
       const terminalLots = this.terminalLots(auction, snapshot);
       await this.store.mutate(async (state) => {
@@ -86,6 +92,40 @@ export class Watcher {
       });
     } catch (error) {
       await this.handleFailure(auction, error);
+    } finally {
+      this.currentAuctionKey = "";
+      this.currentCheckStartedAt = null;
+      this.lastProgressAt = this.now();
+    }
+  }
+
+  async monitorWithTimeout(auction) {
+    let timer = null;
+    const monitoring = auction.mode === "timed"
+      ? this.monitor.timedAuction(auction)
+      : this.monitor.liveAuction(auction);
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        const error = new Error(
+          `Auction page check timed out after ${Math.max(1, Math.ceil(this.checkTimeoutMs / 1000))} seconds. The stalled page was reset and monitoring will retry automatically.`
+        );
+        error.code = "AUCTION_CHECK_TIMEOUT";
+        reject(error);
+      }, this.checkTimeoutMs);
+    });
+    try {
+      return await Promise.race([monitoring, timeout]);
+    } catch (error) {
+      if (error?.code === "AUCTION_CHECK_TIMEOUT") {
+        await Promise.allSettled([
+          this.monitor.closeAuction(auction.auctionKey),
+          this.monitor.closeAuction(`${auction.auctionKey}:catalogue`),
+          this.monitor.closeAuction(`${auction.auctionKey}:live`)
+        ]);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -353,7 +393,11 @@ export class Watcher {
       running: Boolean(this.timer),
       checking: this.running,
       lastLoopAt: this.lastLoopAt,
-      lastLoopCompletedAt: this.lastLoopCompletedAt
+      lastLoopCompletedAt: this.lastLoopCompletedAt,
+      lastProgressAt: this.lastProgressAt,
+      currentAuctionKey: this.currentAuctionKey,
+      currentCheckStartedAt: this.currentCheckStartedAt,
+      checkTimeoutMs: this.checkTimeoutMs
     };
   }
 }

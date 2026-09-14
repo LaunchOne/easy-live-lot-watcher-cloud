@@ -17,6 +17,7 @@ export const config = Object.freeze({
   dataFile: String(process.env.DATA_FILE || "/data/state.json"),
   pollIntervalMs: integer("POLL_INTERVAL_SECONDS", 30, 15, 300) * 1000,
   navigationTimeoutMs: integer("NAVIGATION_TIMEOUT_SECONDS", 45, 10, 120) * 1000,
+  auctionCheckTimeoutMs: integer("AUCTION_CHECK_TIMEOUT_SECONDS", 180, 60, 600) * 1000,
   allowedHosts: String(process.env.ALLOWED_AUCTION_HOSTS || "auctions.wellersauctions.com,*.easyliveauction.com")
     .split(",").map((value) => value.trim().toLowerCase()).filter(Boolean)
 });

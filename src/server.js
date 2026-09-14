@@ -15,7 +15,13 @@ const pushover = new Pushover({
   priority: config.pushoverPriority
 });
 const monitor = new BrowserMonitor({ navigationTimeoutMs: config.navigationTimeoutMs });
-const watcher = new Watcher({ store, monitor, pushover, pollIntervalMs: config.pollIntervalMs });
+const watcher = new Watcher({
+  store,
+  monitor,
+  pushover,
+  pollIntervalMs: config.pollIntervalMs,
+  checkTimeoutMs: config.auctionCheckTimeoutMs
+});
 const missingConfiguration = validateProductionConfig();
 const COMPLETION_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
@@ -52,7 +58,12 @@ async function body(request, limit = 1024 * 1024) {
 
 function publicHealth() {
   const loop = watcher.status();
-  const healthyLoop = !loop.lastLoopAt || Date.now() - loop.lastLoopAt < Math.max(5 * 60 * 1000, config.pollIntervalMs * 5);
+  const lastActivityAt = Number(loop.lastProgressAt || loop.currentCheckStartedAt || loop.lastLoopAt || 0);
+  const healthyLoop = !loop.lastLoopAt || Date.now() - lastActivityAt < Math.max(
+    5 * 60 * 1000,
+    config.pollIntervalMs * 5,
+    config.auctionCheckTimeoutMs + 60 * 1000
+  );
   const auctions = Object.values(store.state.auctions);
   const count = (mode) => auctions.filter((auction) => auction.mode === mode);
   const liveAuctions = count("live");
@@ -60,8 +71,11 @@ function publicHealth() {
   return {
     ok: missingConfiguration.length === 0 && healthyLoop,
     service: "easy-live-lot-watcher-cloud",
-    version: "1.1.2",
+    version: "1.1.3",
     configured: missingConfiguration.length === 0,
+    healthProblem: missingConfiguration.length
+      ? `Missing configuration: ${missingConfiguration.join(", ")}`
+      : healthyLoop ? "" : "The auction checker has not completed within its expected time. A stalled page will be reset automatically.",
     watcher: loop,
     auctionCount: auctions.length,
     auctionModes: { live: liveAuctions.length, timed: timedAuctions.length },

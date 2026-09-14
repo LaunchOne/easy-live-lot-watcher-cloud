@@ -2,6 +2,8 @@
 
 An always-on Railway companion for the Easy Live Lot Watcher Chrome extension. It monitors public Easy Live auction pages and sends Pushover alerts while the user's computer is asleep or closed.
 
+Service v1.1.3 prevents one unresponsive auction page from blocking every cloud watch. Each auction check has a three-minute watchdog; a stalled browser page is closed, the incident is recorded, and the loop continues to the next auction. The public health response now identifies this condition directly, and extension v0.7.3 displays a useful Railway health message instead of the misleading **Railway returned HTTP 200**.
+
 Service v1.1.2 detects historical timed sales that older extension versions accidentally submitted as live auctions. Explicit **Auction ended**, **Sale ended** and historic **Sold for** evidence retires those records automatically. It also parses sale dates from server-rendered Easy Live pages, including white-label auction-house sites.
 
 Service v1.1.1 derives Easy Live's live-bidding route from the catalogue's unique sale route when the site does not render a visible **Bid Live** link. It reads the current live lot from that page, keeps the extension's live countdown current, and retires live-sale records more than 72 hours after their advertised start. Version 0.7.1 also stops treating the auction-house identifier reused in Wellers URLs as a unique live-sale identity, preventing current and historical auctions from being merged.
@@ -28,10 +30,11 @@ Service v1.1.0 monitors live watches whether they were prepared from the schedul
    - `PUSHOVER_PRIORITY`: optional; defaults to `1`.
    - `DATA_FILE`: optional; defaults to `/data/state.json`.
    - `POLL_INTERVAL_SECONDS`: optional; defaults to `30` and cannot be lower than `15`.
+   - `AUCTION_CHECK_TIMEOUT_SECONDS`: optional; defaults to `180` seconds.
 
 4. Generate a public Railway domain for the service.
 5. Confirm `https://YOUR-DOMAIN/health` returns JSON with `"ok": true`.
-6. Install extension v0.7.2, enter the Railway URL and `CLOUD_API_KEY`, then use **Save & test cloud**.
+6. Install extension v0.7.3, enter the Railway URL and `CLOUD_API_KEY`, then use **Save & test cloud**.
 
 Do not place secrets in this repository. The `.env.example` file contains names only.
 
