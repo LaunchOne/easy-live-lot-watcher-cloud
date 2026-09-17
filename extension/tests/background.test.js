@@ -724,6 +724,33 @@ test("cloud synchronization includes public watch data but no Pushover credentia
   assert.doesNotMatch(text, /private-user-key|private-app-token|private-cloud-key/);
 });
 
+test("cloud synchronization does not assign an open individual page to unseen timed lots", async () => {
+  const harness = loadBackground();
+  const auctionKey = "https://www.easyliveauction.com::timed::ABC";
+  const catalogueUrl = "https://www.easyliveauction.com/catalogue/ABC/DAY/sale/";
+  const openLotUrl = "https://www.easyliveauction.com/catalogue/lot/LOT303/DAY/sale-lot-303/";
+  harness.state.timedAuctionConfigs = {
+    [auctionKey]: {
+      mode: "timed", auctionId: "ABC", dayId: "DAY", auctionLabel: "Sale",
+      url: catalogueUrl, lots: ["302", "303"],
+      lotOptions: { "302": { stagesSeconds: [180] }, "303": { stagesSeconds: [180] } }, updatedAt: 123
+    }
+  };
+  harness.state.auctionRuntime = {
+    [auctionKey]: {
+      watched: [
+        { targetLot: "302", visible: false, url: openLotUrl },
+        { targetLot: "303", visible: true, url: openLotUrl }
+      ]
+    }
+  };
+
+  const payload = await harness.api.buildCloudPayload();
+  const lots = Object.fromEntries(payload.auctions[0].lots.map((lot) => [lot.lot, lot]));
+  assert.equal(lots["302"].url, catalogueUrl);
+  assert.equal(lots["303"].url, openLotUrl);
+});
+
 test("cloud reconciliation compares exact lot sets rather than totals alone", () => {
   const harness = loadBackground();
   const entries = [{

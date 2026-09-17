@@ -175,7 +175,7 @@ export class BrowserMonitor {
           description: watched.description
         });
       } else if (watched.url) {
-        found = await this.staticTimedLot(page.context(), watched).catch(() => null);
+        found = await this.staticTimedLot(page.context(), watched, auction).catch(() => null);
       }
       lots.push(found || {
         lot: watched.lot,
@@ -199,21 +199,90 @@ export class BrowserMonitor {
     };
   }
 
-  async staticTimedLot(context, watched) {
-    const response = await context.request.get(watched.url, { timeout: this.navigationTimeoutMs });
-    if (!response.ok()) throw new Error(`Lot page returned ${response.status()}.`);
-    const html = await response.text();
+  async staticTimedLot(context, watched, auction = {}) {
+    const targetLot = normalizeLot(watched.lot);
+    const catalogueUrl = String(auction.url || "");
+    let response = null;
+    let html = "";
+
+    const load = async (url) => {
+      if (!url) return false;
+      const candidate = await context.request.get(url, { timeout: this.navigationTimeoutMs });
+      if (!candidate.ok()) throw new Error(`Lot page returned ${candidate.status()}.`);
+      const candidateHtml = await candidate.text();
+      const candidateLot = this.staticLotNumber(candidateHtml);
+      if (candidateLot !== targetLot) return false;
+      response = candidate;
+      html = candidateHtml;
+      return true;
+    };
+
+    const watchedUrl = String(watched.url || "");
+    const watchedIsIndividual = /\/catalogue\/lot\//i.test(watchedUrl);
+    let exact = watchedIsIndividual && await load(watchedUrl);
+    if (!exact && catalogueUrl) {
+      const searchUrl = new URL(catalogueUrl);
+      searchUrl.search = "";
+      searchUrl.searchParams.set("searchTerm", targetLot);
+      searchUrl.searchParams.set("searchOption", "2");
+      exact = await load(searchUrl.href);
+    }
+    if (!exact && watchedUrl && !watchedIsIndividual) exact = await load(watchedUrl);
+    if (!exact || !response) return null;
+
+    const resolvedUrl = typeof response.url === "function" ? response.url() : watchedUrl || catalogueUrl;
+    const lotId = String(
+      html.match(/refreshTimedBidding\s*\(\s*["']([^"']+)/i)?.[1] ||
+      resolvedUrl.match(/\/catalogue\/lot\/([^/]+)/i)?.[1] || ""
+    ).trim();
+    const description = String(html.match(/<h1[^>]*class=["'][^"']*lot-desc-h1[^"']*["'][^>]*>([\s\S]*?)<\/h1>/i)?.[1] || watched.description || "")
+      .replace(/<[^>]*>/g, " ").replace(/&nbsp;|&#x20;/gi, " ").replace(/\s+/g, " ").trim();
+
+    if (lotId) {
+      const statusUrl = new URL("/components/catalogue_components.cfc?method=doRefreshTimedBidding", resolvedUrl).href;
+      const statusResponse = await context.request.post(statusUrl, {
+        timeout: this.navigationTimeoutMs,
+        form: { data: JSON.stringify({ lot: lotId }) }
+      }).catch(() => null);
+      if (statusResponse?.ok()) {
+        const raw = (await statusResponse.text()).replace(/^\s*\/\/\s*/, "");
+        const status = JSON.parse(raw);
+        const confirmedEnded = status.ended === true || Number(status.ended) === 1 ||
+          /^(?:ended|closed|finished|complete|completed)$/i.test(String(status.endTime || "").trim());
+        const secondsLeft = Number(status.secondsLeft);
+        const deadlineMs = !confirmedEnded && Number.isFinite(secondsLeft) && secondsLeft > 0
+          ? Date.now() + secondsLeft * 1000 : parseEasyLiveTime(status.dateEnd);
+        return {
+          lot: targetLot,
+          lotId,
+          deadlineMs,
+          confirmedEnded,
+          ended: confirmedEnded || (Number.isFinite(deadlineMs) && deadlineMs <= Date.now()),
+          awaitingStart: !confirmedEnded && !Number.isFinite(deadlineMs),
+          description,
+          url: resolvedUrl
+        };
+      }
+    }
+
     const deadlineMatch = html.match(/(?:end_lot_time|data-end-time|datetime)[^>:=]*[>:=]["']?([^"'<}\n]+)/i);
     const ended = /\b(?:bidding closed|lot ended|lot closed|lot finished|auction ended|sale ended|sold for)\b/i.test(html);
     return {
-      lot: watched.lot,
+      lot: targetLot,
+      lotId,
       deadlineMs: parseEasyLiveTime(deadlineMatch?.[1]?.trim()),
       confirmedEnded: ended,
       ended,
       awaitingStart: !ended && !deadlineMatch,
-      description: watched.description,
-      url: watched.url
+      description,
+      url: resolvedUrl
     };
+  }
+
+  staticLotNumber(html) {
+    const lotHeading = String(html || "").match(/<h[1-6][^>]*class=["'][^"']*\blot-no\b[^"']*["'][^>]*>([\s\S]*?)<\/h[1-6]>/i)?.[1] || "";
+    const text = lotHeading.replace(/<[^>]*>/g, " ").replace(/&nbsp;|&#x20;/gi, " ").replace(/\s+/g, " ").trim();
+    return normalizeLot(text.match(/\bLot\s*(?:No\.?\s*)?([A-Za-z0-9][A-Za-z0-9._\/-]*)/i)?.[1] || "");
   }
 
   async catalogueOrder(page, context) {
@@ -256,7 +325,7 @@ export class BrowserMonitor {
       const exactLots = [];
       for (const watched of auction.lots || []) {
         const lot = watched.url && cataloguePage
-          ? await this.staticTimedLot(cataloguePage.context(), watched).catch(() => null) : null;
+          ? await this.staticTimedLot(cataloguePage.context(), watched, auction).catch(() => null) : null;
         if (lot) exactLots.push(lot);
       }
       const allEnded = exactLots.length === (auction.lots || []).length && exactLots.length > 0 &&

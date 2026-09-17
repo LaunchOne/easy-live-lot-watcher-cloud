@@ -397,12 +397,15 @@ function cloudWatchedLots(config, status, mode) {
   return (config.lots || []).map((lot) => {
     const runtime = (status?.watched || []).find((item) => normalizeLot(item.targetLot) === normalizeLot(lot)) || {};
     const options = config.lotOptions?.[lot] || {};
+    const timedUrl = runtime.visible
+      ? runtime.bidUrl || runtime.url || config.url || ""
+      : config.url || "";
     return {
       lot: normalizeLot(lot),
       ...(mode === "timed"
         ? { stagesSeconds: normalizeTimedStages(options.stagesSeconds) }
         : { stages: normalizeLiveStages(options.stages) }),
-      url: runtime.bidUrl || runtime.url || "",
+      url: mode === "timed" ? timedUrl : runtime.bidUrl || runtime.url || "",
       description: runtime.description || ""
     };
   });
