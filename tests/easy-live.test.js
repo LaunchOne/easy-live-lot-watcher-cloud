@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  catalogueUrlFromLive, dueStage, hostMatches, isBidLiveUrl, liveDistance, liveFeedExpected, normalizeLot, parseEasyLiveTime, sanitizeAuction
+  catalogueUrlFromLive, dueStage, hostMatches, isBidLiveUrl, liveDistance, liveFeedExpected, normalizeLot,
+  parseAuctionLabelDate, parseEasyLiveTime, sanitizeAuction
 } from "../src/easy-live.js";
 
 test("normalizes lettered and labelled lots", () => {
@@ -10,6 +11,14 @@ test("normalizes lettered and labelled lots", () => {
 
 test("parses Easy Live UTC wall timestamps", () => {
   assert.equal(parseEasyLiveTime("07 Sep 2026 12:34:56"), Date.UTC(2026, 8, 7, 12, 34, 56));
+});
+
+test("parses abbreviated auction dates from Easy Live catalogue titles", () => {
+  assert.equal(
+    parseAuctionLabelDate("Unclaimed Airport Lost Property (14 Sep 26)"),
+    Date.UTC(2026, 8, 14)
+  );
+  assert.equal(parseAuctionLabelDate("Sale without a date"), null);
 });
 
 test("selects only the nearest useful alert when starting late", () => {

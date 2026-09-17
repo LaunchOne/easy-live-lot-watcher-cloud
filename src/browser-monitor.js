@@ -1,9 +1,10 @@
 import { chromium } from "playwright";
-import { catalogueUrlFromLive, isBidLiveUrl, liveFeedExpected, normalizeLot, normalizeTimedLot, parseEasyLiveTime } from "./easy-live.js";
+import { catalogueUrlFromLive, isBidLiveUrl, liveFeedExpected, normalizeLot, normalizeTimedLot, parseAuctionLabelDate, parseEasyLiveTime } from "./easy-live.js";
 import { requestCurrentLiveLot } from "./live-socket.js";
 
 const LIVE_AUCTION_RETENTION_MS = 72 * 60 * 60 * 1000;
 const LIVE_FEED_START_GRACE_MS = 10 * 60 * 1000;
+const TIMED_AUCTION_RETENTION_MS = 48 * 60 * 60 * 1000;
 
 export class BrowserMonitor {
   constructor({ navigationTimeoutMs = 45000 } = {}) {
@@ -189,14 +190,27 @@ export class BrowserMonitor {
       });
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
+    const label = context.label || auction.label;
+    const retentionEnded = this.timedRetentionEnded(label, lots);
     return {
       mode: "timed",
-      label: context.label || auction.label,
-      auctionEnded: context.ended,
+      label,
+      auctionEnded: Boolean(context.ended || retentionEnded),
+      terminalReason: retentionEnded ? "historic-timed-retention" : context.ended ? "auction-ended" : "",
       startsAtMs: parseEasyLiveTime(context.startsAt),
       bidLiveUrl: context.bidLiveUrl,
       lots
     };
+  }
+
+  timedRetentionEnded(label, lots, now = Date.now()) {
+    const labelDateMs = parseAuctionLabelDate(label);
+    const noActiveDeadline = lots.length > 0 && lots.every((lot) =>
+      (lot.deadlineMs === null || lot.deadlineMs === undefined || lot.deadlineMs === "" ||
+        !Number.isFinite(Number(lot.deadlineMs))) && (lot.awaitingStart || lot.unavailable)
+    );
+    return noActiveDeadline && Number.isFinite(labelDateMs) &&
+      now >= labelDateMs + TIMED_AUCTION_RETENTION_MS;
   }
 
   async staticTimedLot(context, watched, auction = {}) {

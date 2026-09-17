@@ -71,7 +71,7 @@ function publicHealth() {
   return {
     ok: missingConfiguration.length === 0 && healthyLoop,
     service: "easy-live-lot-watcher-cloud",
-    version: "1.1.8",
+    version: "1.1.9",
     configured: missingConfiguration.length === 0,
     healthProblem: missingConfiguration.length
       ? `Missing configuration: ${missingConfiguration.join(", ")}`

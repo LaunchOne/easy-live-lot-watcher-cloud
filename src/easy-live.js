@@ -21,6 +21,16 @@ export function parseEasyLiveTime(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+export function parseAuctionLabelDate(value) {
+  const text = String(value || "");
+  const match = text.match(/(?:^|[\s(])(\d{1,2})\s+([A-Za-z]{3,9})\s+(\d{2,4})(?=[\s)]|$)/i);
+  if (!match) return null;
+  const month = MONTHS[match[2].slice(0, 3).toUpperCase()];
+  if (month === undefined) return null;
+  const year = Number(match[3]) < 100 ? 2000 + Number(match[3]) : Number(match[3]);
+  return Date.UTC(year, month, Number(match[1]));
+}
+
 export function normalizeTimedLot(raw, fallback = {}) {
   const lot = normalizeLot(raw?.lot_no || raw?.lotno || raw?.lot_number || raw?.lot || fallback.lot);
   const deadlineMs = parseEasyLiveTime(raw?.date_info?.end_lot_time || raw?.end_lot_time || raw?.deadlineMs);

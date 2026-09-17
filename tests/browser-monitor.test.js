@@ -83,3 +83,23 @@ test("static timed lookup uses the exact countdown service for an active lot", a
   assert.ok(lot.deadlineMs >= before + 3_599_000);
   assert.equal(lot.awaitingStart, false);
 });
+
+test("historic timed catalogue retention requires both an old sale date and no active deadlines", () => {
+  const monitor = new BrowserMonitor();
+  const now = Date.UTC(2026, 8, 17, 9);
+  assert.equal(monitor.timedRetentionEnded(
+    "Unclaimed Airport Lost Property (14 Sep 26)",
+    [{ lot: "302", deadlineMs: null, awaitingStart: true, unavailable: true }],
+    now
+  ), true);
+  assert.equal(monitor.timedRetentionEnded(
+    "Future sale (20 Sep 26)",
+    [{ lot: "10", deadlineMs: null, awaitingStart: true, unavailable: true }],
+    now
+  ), false);
+  assert.equal(monitor.timedRetentionEnded(
+    "Old sale (14 Sep 26)",
+    [{ lot: "10", deadlineMs: now + 60_000, awaitingStart: false, unavailable: false }],
+    now
+  ), false);
+});
