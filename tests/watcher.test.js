@@ -69,8 +69,17 @@ test("timed stages send once and do not re-arm after an extension", async () => 
   assert.equal(f.state.events.find((event) => event.type === "alert-sent").details.pushoverRequest, "request-1");
 });
 
-test("pre-auction live feed warning is sent once inside the fifteen-minute window", async () => {
+test("pre-auction live feed stays silent before the scheduled start", async () => {
   const f = fixture();
+  const auction = { auctionKey: "live-a", mode: "live", label: "Live Sale", url: "https://example/live", lots: [{ lot: "20", stages: [5] }] };
+  const snapshot = { mode: "live", scheduled: true, currentLot: "", startsAtMs: 1_600_000, auctionEnded: false };
+  await f.watcher.evaluatePreAuctionReadiness(f.state, auction, snapshot);
+  assert.equal(f.sent.length, 0);
+  assert.equal(f.state.readiness["live-a"].status, "scheduled");
+});
+
+test("missing live feed warns once after the ten-minute post-start grace period", async () => {
+  const f = fixture(2_200_001);
   const auction = { auctionKey: "live-a", mode: "live", label: "Live Sale", url: "https://example/live", lots: [{ lot: "20", stages: [5] }] };
   const snapshot = { mode: "live", scheduled: true, currentLot: "", startsAtMs: 1_600_000, auctionEnded: false };
   await f.watcher.evaluatePreAuctionReadiness(f.state, auction, snapshot);
@@ -78,6 +87,7 @@ test("pre-auction live feed warning is sent once inside the fifteen-minute windo
   assert.equal(f.sent.length, 1);
   assert.equal(f.state.readiness["live-a"].status, "warning");
   assert.equal(f.state.readiness["live-a"].delivery, "accepted");
+  assert.match(f.sent[0].message, /passed at least 10 minutes ago/i);
   assert.equal(f.state.events.filter((event) => event.type === "pre-auction-warning").length, 1);
 });
 

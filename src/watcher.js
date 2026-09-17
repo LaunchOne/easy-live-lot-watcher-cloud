@@ -1,8 +1,7 @@
 import { dueStage, liveDistance } from "./easy-live.js";
 
 const TEN_MINUTES = 10 * 60 * 1000;
-const PRE_AUCTION_WARNING_MS = 15 * 60 * 1000;
-const PRE_AUCTION_LATE_WINDOW_MS = 30 * 60 * 1000;
+const POST_START_FEED_GRACE_MS = 10 * 60 * 1000;
 
 function alertKey(auctionKey, lot, stage) {
   return `${auctionKey}::${lot}::${Number(stage)}`;
@@ -301,10 +300,9 @@ export class Watcher {
       state.readiness[auction.auctionKey] = { ...existing, status: "scheduled", checkedAt: now, startsAtMs: null };
       return;
     }
-    const untilStart = startsAtMs - now;
-    const warningWindow = untilStart <= PRE_AUCTION_WARNING_MS && untilStart >= -PRE_AUCTION_LATE_WINDOW_MS;
+    const warningDue = now >= startsAtMs + POST_START_FEED_GRACE_MS;
     const sameStart = Number(existing.startsAtMs) === startsAtMs;
-    if (!warningWindow) {
+    if (!warningDue) {
       state.readiness[auction.auctionKey] = { status: "scheduled", checkedAt: now, startsAtMs };
       return;
     }
@@ -312,15 +310,12 @@ export class Watcher {
       state.readiness[auction.auctionKey] = { ...existing, status: "warning", checkedAt: now };
       return;
     }
-    const minutes = Math.max(0, Math.ceil(untilStart / 60000));
-    const message = untilStart > 0
-      ? `${auction.label}\nThe live feed is not available with about ${minutes} minute${minutes === 1 ? "" : "s"} until the scheduled start.`
-      : `${auction.label}\nThe scheduled start time has passed, but the live feed is not available yet.`;
+    const message = `${auction.label}\nThe scheduled start time passed at least 10 minutes ago, but the live feed is still unavailable.`;
     let delivery = "failed";
     let pushoverRequest = "";
     try {
       const result = await this.pushover.send({
-        title: "Live auction readiness needs attention",
+        title: "Live auction feed needs attention",
         message,
         url: auction.bidLiveUrl || auction.url
       });
