@@ -175,8 +175,19 @@ export class BrowserMonitor {
           url: watched.url,
           description: watched.description
         });
-      } else if (watched.url) {
-        found = await this.staticTimedLot(page.context(), watched, auction).catch(() => null);
+      }
+      const needsExactStatus = !found || (!found.confirmedEnded && !found.ended && !Number.isFinite(found.deadlineMs));
+      if (needsExactStatus && watched.url) {
+        const exact = await this.staticTimedLot(page.context(), {
+          ...watched,
+          url: found?.url || watched.url
+        }, auction).catch(() => null);
+        if (exact) found = {
+          ...found,
+          ...exact,
+          description: exact.description || found?.description || watched.description,
+          url: exact.url || found?.url || watched.url
+        };
       }
       lots.push(found || {
         lot: watched.lot,
