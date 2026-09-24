@@ -84,7 +84,7 @@ test("static timed lookup uses the exact countdown service for an active lot", a
   assert.equal(lot.awaitingStart, false);
 });
 
-test("timed catalogue lots with no deadline are enriched from the exact countdown service", async () => {
+test("timed catalogue lots with no deadline are enriched through the browser countdown service", async () => {
   const monitor = new BrowserMonitor();
   const page = { context: () => ({ request: {} }) };
   const lotUrl = "https://www.easyliveauction.com/catalogue/lot/LOT298/DAY/sale-lot-298/";
@@ -104,7 +104,7 @@ test("timed catalogue lots with no deadline are enriched from the exact countdow
     }
   });
   let exactLookup = null;
-  monitor.staticTimedLot = async (_context, watched) => {
+  monitor.browserTimedLot = async (_page, watched) => {
     exactLookup = watched;
     return {
       lot: "298",
@@ -117,6 +117,7 @@ test("timed catalogue lots with no deadline are enriched from the exact countdow
       url: lotUrl
     };
   };
+  monitor.staticTimedLot = async () => { throw new Error("request fallback should not be needed"); };
 
   const snapshot = await monitor.timedAuction({
     auctionKey: "timed-sale",
@@ -130,6 +131,33 @@ test("timed catalogue lots with no deadline are enriched from the exact countdow
   assert.equal(snapshot.lots[0].awaitingStart, false);
   assert.ok(snapshot.lots[0].deadlineMs > Date.now());
   assert.equal(snapshot.lots[0].description, "Exact status result");
+});
+
+test("browser timed lookup converts Easy Live seconds-left data into an active deadline", async () => {
+  const monitor = new BrowserMonitor();
+  const before = Date.now();
+  const page = {
+    async evaluate(_callback, input) {
+      assert.equal(input.targetLot, "298");
+      assert.match(input.catalogueUrl, /catalogue\/AUCTION\/DAY/);
+      return {
+        lotId: "LOT298",
+        description: "Browser-resolved lot",
+        resolvedUrl: "https://www.easyliveauction.com/catalogue/lot/LOT298/DAY/sale-lot-298/",
+        status: { ended: 0, endTime: "1h 13m", secondsLeft: "4380", dateEnd: "September, 24 2026 12:50:50" }
+      };
+    }
+  };
+
+  const lot = await monitor.browserTimedLot(page, {
+    lot: "298",
+    url: "https://www.easyliveauction.com/catalogue/AUCTION/DAY/sale/"
+  }, { url: "https://www.easyliveauction.com/catalogue/AUCTION/DAY/sale/" });
+
+  assert.equal(lot.awaitingStart, false);
+  assert.equal(lot.confirmedEnded, false);
+  assert.equal(lot.description, "Browser-resolved lot");
+  assert.ok(lot.deadlineMs >= before + 4_379_000);
 });
 
 test("historic timed catalogue retention requires both an old sale date and no active deadlines", () => {
