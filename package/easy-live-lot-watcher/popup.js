@@ -24,6 +24,8 @@ let refreshTimer = null;
 let dashboardTimer = null;
 let readinessRequestAt = 0;
 let latestIssueReportText = "";
+let rememberedAuctionKey = "";
+let dashboardTick = 0;
 
 function setIssueReportMessage(message, isSuccess = false) {
   elements.issueReportMessage.textContent = message || "";
@@ -438,7 +440,8 @@ function renderStatus(status) {
   elements.footerText.textContent = complete
     ? "Monitoring is complete. Your watch list and alert history remain available."
     : scheduledLive ? "Railway will switch this card to the live current-lot feed when the webcast starts."
-    : timed ? "Keep this sale’s main catalogue tab open. Clicking an alert opens the exact lot page."
+    : timed && status.cloudManaged ? "Railway is tracking this timed auction. Clicking an alert opens the exact lot page."
+      : timed ? "Keep this sale’s main catalogue tab open. Clicking an alert opens the exact lot page."
       : status.cloudManaged ? "Railway is tracking this live auction. Clicking an alert opens the live bidding page."
         : "You can browse other tabs. Clicking an alert returns to this live bidding page.";
   elements.lotInput.disabled = Boolean(status.auctionEnded);
@@ -453,9 +456,9 @@ function renderStatus(status) {
 }
 
 async function getEffectiveStatus(status) {
-  if (status?.mode !== "live" || status.currentLot) return status;
+  if (!status?.auctionKey) return status;
   const response = await chrome.runtime.sendMessage({
-    type: "GET_EFFECTIVE_LIVE_STATUS",
+    type: "GET_EFFECTIVE_AUCTION_STATUS",
     payload: { status }
   }).catch(() => null);
   return response?.ok && response.status ? response.status : status;
@@ -667,6 +670,39 @@ function renderCloudAudit(events, enabled) {
   }
 }
 
+function preferredRememberedAuction(dashboard, auctionKey = "") {
+  const auctions = dashboard?.auctions || [];
+  return auctions.find((auction) => auction.auctionKey === auctionKey && !auction.monitoringComplete) ||
+    auctions.find((auction) => !auction.monitoringComplete) ||
+    auctions.find((auction) => auction.auctionKey === auctionKey) || auctions[0] || null;
+}
+
+function renderRememberedAuction(dashboard, auctionKey = "") {
+  const auction = preferredRememberedAuction(dashboard, auctionKey);
+  if (!auction) return false;
+  rememberedAuctionKey = auction.auctionKey;
+  renderStatus({
+    ...auction,
+    ready: Boolean(auction.ready || auction.connected),
+    livePhase: auction.mode === "live" ? auction.livePhase || (auction.currentLot ? "active" : "scheduled") : "",
+    lookupState: auction.lookupState || (auction.connected ? "cloud" : "waiting")
+  });
+  return true;
+}
+
+function tickRememberedCountdown() {
+  if (!rememberedAuctionKey || !pageStatus || pageStatus.auctionKey !== rememberedAuctionKey) return;
+  const watched = (pageStatus.watched || []).map((item) => {
+    const deadlineMs = item.deadlineMs === null || item.deadlineMs === undefined || item.deadlineMs === ""
+      ? null : Number(item.deadlineMs);
+    if (!Number.isFinite(deadlineMs) || ["ended", "passed", "unavailable"].includes(item.state)) return item;
+    const remainingMs = deadlineMs - Date.now();
+    const state = remainingMs <= 0 ? "ended" : "upcoming";
+    return { ...item, remainingMs, state, statusText: Core.formatTimedRemaining(remainingMs) };
+  });
+  renderStatus({ ...pageStatus, watched });
+}
+
 async function forceCloudRefresh(button) {
   button.disabled = true;
   const old = button.textContent;
@@ -721,6 +757,9 @@ async function refreshDashboard() {
   renderCloudStatus(dashboard.cloud);
   renderReconciliation(dashboard.reconciliation);
   renderCloudAudit(dashboard.cloudAlertLog || [], dashboard.cloud?.enabled);
+  if (rememberedAuctionKey && !elements.currentView.classList.contains("hidden")) {
+    renderRememberedAuction(dashboard, rememberedAuctionKey);
+  }
   return dashboard;
 }
 
@@ -750,8 +789,7 @@ async function initialize() {
   activeTab = await getActiveTab();
   identity = Core.parsePageIdentity(activeTab?.url || "");
   if (!activeTab?.id || !identity) {
-    showCurrentPanel(elements.unsupportedView);
-    if (dashboard?.auctions?.length) switchView("dashboard");
+    if (!renderRememberedAuction(dashboard)) showCurrentPanel(elements.unsupportedView);
     return;
   }
   elements.enableHost.textContent = identity.origin;
@@ -759,6 +797,7 @@ async function initialize() {
   if (!allowed) { showCurrentPanel(elements.enableView); return; }
   const response = await ensureContentScript();
   if (response?.ok && response.status && (identity.mode !== "timed" || response.status.ready)) {
+    rememberedAuctionKey = "";
     renderStatus(await getEffectiveStatus(response.status));
     refreshTimer = setInterval(refreshStatus, 1200);
   } else showCurrentPanel(elements.unsupportedView);
@@ -847,8 +886,11 @@ window.addEventListener("unload", () => {
 });
 
 dashboardTimer = setInterval(() => {
-  if (!elements.dashboardView.classList.contains("hidden")) refreshDashboard();
-}, 4000);
+  dashboardTick += 1;
+  if (rememberedAuctionKey && !elements.currentView.classList.contains("hidden")) tickRememberedCountdown();
+  if (dashboardTick % 4 === 0 &&
+      (!elements.dashboardView.classList.contains("hidden") || rememberedAuctionKey)) refreshDashboard();
+}, 1000);
 
 initialize().catch((error) => {
   console.error(error);

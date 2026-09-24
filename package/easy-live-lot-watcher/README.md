@@ -1,8 +1,8 @@
-# Easy Live Lot Watcher — version 0.7.5
+# Easy Live Lot Watcher — version 0.7.6
 
 A personal Chrome extension for live and timed auctions powered by Easy Live Auction. It supports local desktop monitoring and an optional always-on Railway companion for Pushover alerts when the computer is closed.
 
-Version 0.7.5 sends the main catalogue URL for off-page timed watches, preventing one open individual lot page from being assigned to other watched lots. Railway v1.1.8 resolves each requested timed lot exactly and uses Easy Live's read-only bidding status to remove ended watches reliably.
+Version 0.7.6 keeps the most urgent active auction available under **Current auction** while you browse other tabs, and merges Railway's timed-lot deadlines into both the current view and **All watches** so countdowns continue without the catalogue page being active. Version 0.7.5 sends the main catalogue URL for off-page timed watches, preventing one open individual lot page from being assigned to other watched lots. Railway v1.1.10 resolves missing catalogue deadlines through Easy Live's read-only bidding status.
 
 Version 0.7.2 fixes timed auctions on Easy Live and white-label auction-house sites that older versions could incorrectly label **Live** after matching the platform name “Easy Live Auction.” Timed and ended markers now take priority over branding text. Existing misclassified watch records migrate back to timed monitoring, and Railway v1.1.2 removes them when the page confirms **Auction ended**, **Sale ended** or a historic **Sold for** result.
 
@@ -83,7 +83,7 @@ Keep the unzipped folder in a permanent location. Chrome does not charge a devel
 
 ### Updating from an earlier version
 
-Replace the files inside the same previously loaded `easy-live-lot-watcher` folder with the version 0.7.5 files. Open `chrome://extensions`, click **Reload** on the extension, and reload auction tabs that were already open.
+Replace the files inside the same previously loaded `easy-live-lot-watcher` folder with the version 0.7.6 files. Open `chrome://extensions`, click **Reload** on the extension, and reload auction tabs that were already open.
 
 Using the same folder and extension entry preserves watch lists, settings and Pushover keys. Timed alert stages already recorded by earlier versions remain recorded and will not repeat after an extension.
 
@@ -199,4 +199,4 @@ The extension does not place bids, automate sign-in or collect bid history. In c
 
 Use alerts as a convenience rather than the only safeguard for a time-sensitive purchase. Site changes, skipped lots, network outages, browser suspension and notification-service delays can still prevent or delay an alert.
 
-SMS alerts and automated bidding are not included in version 0.7.5.
+SMS alerts and automated bidding are not included in version 0.7.6.

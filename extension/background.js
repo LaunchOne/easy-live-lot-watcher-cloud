@@ -246,6 +246,80 @@ function mergeCloudLiveRuntime(auctionKey, config, localStatus = {}, cloudRuntim
   };
 }
 
+function cloudTimedStatusText(state, remainingMs) {
+  if (state === "ended") return "Lot ended";
+  if (state === "unavailable") return "Unavailable — auction ended";
+  if (state === "not-started") return "Auction not started";
+  if (state === "waiting") return "Locating lot";
+  if (!Number.isFinite(remainingMs)) return "Waiting for closing time";
+  if (remainingMs <= 0) return "Lot ended";
+  const totalSeconds = Math.max(1, Math.ceil(remainingMs / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (days) return `${days}d ${hours}h remaining`;
+  if (hours) return `${hours}h ${minutes}m remaining`;
+  if (minutes) return `${minutes}m ${seconds}s remaining`;
+  return `${seconds}s remaining`;
+}
+
+function mergeCloudTimedRuntime(auctionKey, config, localStatus = {}, cloudRuntime = {}, now = Date.now()) {
+  const remoteByLot = new Map((cloudRuntime.lots || []).map((item) => [normalizeLot(item.lot), item]));
+  const localByLot = new Map((localStatus.watched || []).map((item) => [normalizeLot(item.targetLot), item]));
+  const watched = (config.lots || []).map((targetLot) => {
+    const lot = normalizeLot(targetLot);
+    const existing = localByLot.get(lot) || { targetLot: lot };
+    const remote = remoteByLot.get(lot) || null;
+    if (!remote) return existing.targetLot ? existing : {
+      targetLot: lot, state: "waiting", statusText: "Locating lot", remainingMs: null, visible: false
+    };
+    const deadlineMs = remote.deadlineMs === null || remote.deadlineMs === undefined || remote.deadlineMs === ""
+      ? null : Number(remote.deadlineMs);
+    const hasDeadline = Number.isFinite(deadlineMs);
+    const remainingMs = hasDeadline ? deadlineMs - now : null;
+    const confirmedEnded = Boolean(remote.confirmedEnded);
+    const ended = confirmedEnded || Boolean(remote.ended) || (hasDeadline && remainingMs <= 0);
+    const state = ended ? "ended"
+      : cloudRuntime.auctionEnded || (remote.unavailable && !remote.awaitingStart) ? "unavailable"
+        : remote.awaitingStart ? "not-started"
+          : hasDeadline ? "upcoming" : "waiting";
+    return {
+      ...existing,
+      targetLot: lot,
+      lotId: remote.lotId || existing.lotId || "",
+      deadlineMs: hasDeadline ? deadlineMs : null,
+      remainingMs,
+      confirmedEnded,
+      state,
+      statusText: cloudTimedStatusText(state, remainingMs),
+      visible: true,
+      description: remote.description || existing.description || "",
+      bidUrl: remote.url || existing.bidUrl || existing.url || config.url || "",
+      url: remote.url || existing.url || config.url || "",
+      stagesSeconds: existing.stagesSeconds || config.lotOptions?.[lot]?.stagesSeconds || [180]
+    };
+  }).sort((left, right) => urgencyScore("timed", left) - urgencyScore("timed", right));
+  return {
+    ...localStatus,
+    mode: "timed",
+    auctionKey,
+    auctionId: config.auctionId || localStatus.auctionId || "",
+    dayId: config.dayId || localStatus.dayId || "",
+    auctionLabel: cloudRuntime.label || localStatus.auctionLabel || config.auctionLabel || "Timed auction",
+    ready: !cloudRuntime.error,
+    lookupState: cloudRuntime.error ? "error" : "cloud",
+    lookupError: cloudRuntime.error || "",
+    auctionEnded: Boolean(cloudRuntime.auctionEnded),
+    monitoringComplete: Boolean(cloudRuntime.monitoringComplete),
+    terminalReason: cloudRuntime.terminalReason || localStatus.terminalReason || "",
+    url: localStatus.url || config.url || "",
+    cloudManaged: true,
+    lastSeen: Number(cloudRuntime.lastSuccessAt || cloudRuntime.lastCheckedAt || now),
+    watched
+  };
+}
+
 function confirmedTerminalWatch(mode, item, auctionEnded = false) {
   if (auctionEnded || item?.state === "unavailable") return true;
   if (mode === "live") return item?.state === "passed";
@@ -559,16 +633,23 @@ async function refreshCloudStatus({ force = false } = {}) {
   }
 }
 
-async function effectiveLiveStatus(localStatus) {
-  if (localStatus?.mode !== "live" || !localStatus.auctionKey || localStatus.currentLot) return localStatus;
+async function effectiveAuctionStatus(localStatus) {
+  if (!localStatus?.auctionKey) return localStatus;
   const cloud = await refreshCloudStatus();
   const cloudRuntime = cloud.runtime?.[localStatus.auctionKey];
   const fresh = cloud.connected && cloudRuntime &&
     Date.now() - Number(cloudRuntime.lastSuccessAt || cloudRuntime.lastCheckedAt || 0) < 3 * 60 * 1000;
-  if (!fresh || !cloudRuntime.currentLot) return localStatus;
-  const stored = await chrome.storage.local.get(STORAGE_KEYS.configs);
-  const config = (stored[STORAGE_KEYS.configs] || {})[localStatus.auctionKey];
-  return config ? mergeCloudLiveRuntime(localStatus.auctionKey, config, localStatus, cloudRuntime) : localStatus;
+  if (!fresh) return localStatus;
+  const configKey = localStatus.mode === "timed" ? STORAGE_KEYS.timedConfigs : STORAGE_KEYS.configs;
+  const stored = await chrome.storage.local.get(configKey);
+  const config = (stored[configKey] || {})[localStatus.auctionKey];
+  if (!config) return localStatus;
+  if (localStatus.mode === "timed") {
+    return mergeCloudTimedRuntime(localStatus.auctionKey, config, localStatus, cloudRuntime);
+  }
+  return cloudRuntime.currentLot
+    ? mergeCloudLiveRuntime(localStatus.auctionKey, config, localStatus, cloudRuntime)
+    : localStatus;
 }
 
 function scheduleCloudSync(delay = 500) {
@@ -1807,7 +1888,9 @@ async function getDashboard() {
     const cloudReadiness = cloud.readiness?.[entry.auctionKey] || null;
     const cloudFresh = Boolean(settings.cloudEnabled && cloud.connected && cloudRuntime &&
       Date.now() - Number(cloudRuntime.lastSuccessAt || cloudRuntime.lastCheckedAt || 0) < 3 * 60 * 1000);
-    if (entry.mode === "live" && cloudFresh && cloudRuntime.currentLot && !status?.currentLot) {
+    if (entry.mode === "timed" && cloudFresh) {
+      status = mergeCloudTimedRuntime(entry.auctionKey, entry.config, status || {}, cloudRuntime);
+    } else if (entry.mode === "live" && cloudFresh && cloudRuntime.currentLot && !status?.currentLot) {
       status = mergeCloudLiveRuntime(entry.auctionKey, entry.config, status || {}, cloudRuntime);
     }
     const tab = await getTab(status?.tabId);
@@ -1816,9 +1899,17 @@ async function getDashboard() {
     auctions.push({
       auctionKey: entry.auctionKey,
       mode: entry.mode,
+      auctionId: entry.config.auctionId || status?.auctionId || "",
+      dayId: entry.config.dayId || status?.dayId || "",
       auctionLabel: entry.config.auctionLabel || status?.auctionLabel || "Auction",
       url: status?.url || entry.config.url || "",
+      bidLiveUrl: status?.bidLiveUrl || entry.config.bidLiveUrl || "",
       tabId: status?.tabId || null,
+      ready: Boolean(status?.ready || cloudFresh),
+      livePhase: status?.livePhase || (entry.mode === "live" && status?.currentLot ? "active" : entry.mode === "live" ? "scheduled" : ""),
+      lookupState: status?.lookupState || (cloudFresh ? "cloud" : "waiting"),
+      lookupError: status?.lookupError || "",
+      startsAtMs: status?.startsAtMs ?? null,
       connected: cloudFresh || Boolean(tab && freshness < settings.disconnectWarningMinutes * 60 * 1000 && !tab.discarded && !tab.frozen),
       cloudManaged: Boolean(status?.cloudManaged || cloudFresh),
       auctionEnded: Boolean(status?.auctionEnded),
@@ -2076,8 +2167,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return { ok: true, status: await serializeMutation(() => syncCloud({ test: true })) };
       case "GET_CLOUD_STATUS":
         return { ok: true, status: await serializeMutation(() => refreshCloudStatus()) };
+      case "GET_EFFECTIVE_AUCTION_STATUS":
       case "GET_EFFECTIVE_LIVE_STATUS":
-        return { ok: true, status: await serializeMutation(() => effectiveLiveStatus(message.payload?.status)) };
+        return { ok: true, status: await serializeMutation(() => effectiveAuctionStatus(message.payload?.status)) };
       case "RUN_READINESS_CHECK":
         return { ok: true, result: await serializeMutation(() => readinessCheck(message.payload)) };
       case "GET_READINESS_SUMMARY":

@@ -69,7 +69,7 @@ function loadBackground() {
     navigator: { userAgent: "Test Chrome on macOS", language: "en-GB" },
     fetch: async () => ({})
   });
-  vm.runInContext(`${source}\n;globalThis.__test = { syncTimedSchedules, handleTimedAlarm, timedAlarmName, handleThresholdReached, liveStageKey, refreshReliabilityState, migrateMisclassifiedLiveConfig, migrateMisclassifiedTimedConfig, importAccountWatches, readinessSummary, saveTimedLots, recordDiagnostic, buildIssueReport, checkHealth, buildCloudPayload, pruneCompletedWatches, applyCloudCompletions, mergeCloudLiveRuntime, cloudReconciliation, createBackup, importBackup, railwayResponseError };`, context);
+  vm.runInContext(`${source}\n;globalThis.__test = { syncTimedSchedules, handleTimedAlarm, timedAlarmName, handleThresholdReached, liveStageKey, refreshReliabilityState, migrateMisclassifiedLiveConfig, migrateMisclassifiedTimedConfig, importAccountWatches, readinessSummary, saveTimedLots, recordDiagnostic, buildIssueReport, checkHealth, buildCloudPayload, pruneCompletedWatches, applyCloudCompletions, mergeCloudLiveRuntime, mergeCloudTimedRuntime, getDashboard, cloudReconciliation, createBackup, importBackup, railwayResponseError };`, context);
   return { state, alarms, notifications, tabUpdates, powerEvents, api: context.__test };
 }
 
@@ -876,4 +876,48 @@ test("a scheduled catalogue card switches to the Railway live current lot", () =
   assert.equal(merged.watched[0].remaining, 5);
   assert.equal(merged.watched[0].statusText, "5 lots away");
   assert.equal(merged.cloudManaged, true);
+});
+
+test("Railway timed deadlines remain visible after leaving the auction tab", async () => {
+  const harness = loadBackground();
+  const key = "https://www.easyliveauction.com::timed::TIMED";
+  const now = Date.now();
+  const deadlineMs = now + 10 * 60 * 1000;
+  harness.state.settings = {
+    cloudEnabled: true,
+    cloudServiceUrl: "https://watcher.up.railway.app",
+    cloudApiKey: "a-private-cloud-key-with-length",
+    reliabilityMode: true,
+    disconnectWarningMinutes: 2
+  };
+  harness.state.timedAuctionConfigs = {
+    [key]: {
+      mode: "timed", auctionId: "TIMED", dayId: "DAY", auctionLabel: "Cloud timed sale",
+      url: "https://www.easyliveauction.com/catalogue/TIMED/DAY/sale/", lots: ["298"],
+      lotOptions: { "298": { stagesSeconds: [180] } }
+    }
+  };
+  harness.state.auctionRuntime = {
+    [key]: { mode: "timed", auctionKey: key, watched: [{ targetLot: "298", state: "waiting", remainingMs: null }] }
+  };
+  harness.state.cloudStatus = {
+    connected: true,
+    checkedAt: now,
+    runtime: {
+      [key]: {
+        mode: "timed", label: "Cloud timed sale", lastSuccessAt: now,
+        lots: [{ lot: "298", deadlineMs, awaitingStart: false, ended: false, confirmedEnded: false,
+          url: "https://www.easyliveauction.com/catalogue/lot/LOT298/DAY/sale-lot-298/" }]
+      }
+    }
+  };
+
+  const dashboard = await harness.api.getDashboard();
+  const auction = dashboard.auctions[0];
+  assert.equal(auction.connected, true);
+  assert.equal(auction.cloudManaged, true);
+  assert.equal(auction.watched[0].state, "upcoming");
+  assert.ok(auction.watched[0].remainingMs > 9 * 60 * 1000);
+  assert.match(auction.watched[0].statusText, /remaining/);
+  assert.match(auction.watched[0].bidUrl, /catalogue\/lot\/LOT298/);
 });
