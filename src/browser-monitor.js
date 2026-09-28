@@ -181,8 +181,19 @@ export class BrowserMonitor {
     }, normalizeLot(lotNumber));
   }
 
+  timedCatalogueUrl(auction) {
+    const configured = new URL(auction.url);
+    if (!/\/catalogue\/lot\//i.test(configured.pathname) || !auction.auctionId || !auction.dayId) return configured.href;
+    configured.pathname = `/catalogue/${encodeURIComponent(auction.auctionId)}/${encodeURIComponent(auction.dayId)}/`;
+    configured.search = "";
+    configured.hash = "";
+    return configured.href;
+  }
+
   async timedAuction(auction) {
-    const page = await this.pageFor(auction.auctionKey, auction.url);
+    const catalogueUrl = this.timedCatalogueUrl(auction);
+    const effectiveAuction = { ...auction, url: catalogueUrl };
+    const page = await this.pageFor(auction.auctionKey, catalogueUrl);
     await this.waitForCatalogue(page);
     const context = await this.catalogueContext(page);
     const lots = [];
@@ -204,8 +215,8 @@ export class BrowserMonitor {
           ...watched,
           url: found?.url || watched.url
         };
-        const exact = await this.browserTimedLot(page, exactWatch, auction).catch(() => null) ||
-          await this.staticTimedLot(page.context(), exactWatch, auction).catch(() => null);
+        const exact = await this.browserTimedLot(page, exactWatch, effectiveAuction).catch(() => null) ||
+          await this.staticTimedLot(page.context(), exactWatch, effectiveAuction).catch(() => null);
         if (exact) found = {
           ...found,
           ...exact,

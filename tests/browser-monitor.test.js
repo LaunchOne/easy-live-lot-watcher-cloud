@@ -202,6 +202,43 @@ test("browser timed lookup converts Easy Live seconds-left data into an active d
   assert.ok(lot.deadlineMs >= before + 4_379_000);
 });
 
+test("timed monitoring rebuilds a catalogue URL when a saved auction points at an individual lot", async () => {
+  const monitor = new BrowserMonitor();
+  let openedUrl = "";
+  let exactAuctionUrl = "";
+  const page = { context: () => ({ request: {} }) };
+  monitor.pageFor = async (_key, url) => { openedUrl = url; return page; };
+  monitor.waitForCatalogue = async () => {};
+  monitor.catalogueContext = async () => ({ label: "Ended sale (24 Sep 26)", ended: false });
+  monitor.lookupWithPageData = async () => ({ supported: false, success: false });
+  monitor.browserTimedLot = async (_page, watched, auction) => {
+    exactAuctionUrl = auction.url;
+    return {
+      lot: watched.lot,
+      deadlineMs: Date.UTC(2026, 8, 24, 12),
+      confirmedEnded: true,
+      ended: true,
+      awaitingStart: false,
+      description: watched.description,
+      url: watched.url
+    };
+  };
+
+  const snapshot = await monitor.timedAuction({
+    auctionKey: "timed-sale",
+    auctionId: "AUCTION-ID",
+    dayId: "DAY-ID",
+    mode: "timed",
+    label: "Incorrect lot description",
+    url: "https://www.easyliveauction.com/catalogue/lot/WRONG-LOT/DAY-ID/sale-lot-258/",
+    lots: [{ lot: "298", url: "https://www.easyliveauction.com/catalogue/lot/WRONG-LOT/DAY-ID/sale-lot-258/", description: "Watched lot" }]
+  });
+
+  assert.equal(openedUrl, "https://www.easyliveauction.com/catalogue/AUCTION-ID/DAY-ID/");
+  assert.equal(exactAuctionUrl, openedUrl);
+  assert.equal(snapshot.lots[0].confirmedEnded, true);
+});
+
 test("historic timed catalogue retention requires both an old sale date and no active deadlines", () => {
   const monitor = new BrowserMonitor();
   const now = Date.UTC(2026, 8, 17, 9);
