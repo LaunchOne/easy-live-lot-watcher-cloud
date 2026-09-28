@@ -28,25 +28,47 @@ export class BrowserMonitor {
     this.browser = null;
   }
 
+  async createPage(key) {
+    const page = await this.browser.newPage({
+      locale: "en-GB",
+      timezoneId: "Europe/London",
+      userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/139 Safari/537.36 EasyLiveLotWatcherCloud/1.0"
+    });
+    page.setDefaultNavigationTimeout(this.navigationTimeoutMs);
+    page.setDefaultTimeout(Math.min(this.navigationTimeoutMs, 20000));
+    await page.route("**/*", (route) => {
+      const type = route.request().resourceType();
+      return ["image", "media", "font"].includes(type) ? route.abort() : route.continue();
+    });
+    this.pages.set(key, page);
+    return page;
+  }
+
+  retryableNavigationError(error) {
+    return /timeout|err_|target (?:page, context or browser )?closed|target crashed|navigation failed/i
+      .test(String(error?.message || error));
+  }
+
   async pageFor(key, url) {
     await this.start();
-    let page = this.pages.get(key);
-    if (!page || page.isClosed()) {
-      page = await this.browser.newPage({
-        locale: "en-GB",
-        timezoneId: "Europe/London",
-        userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/139 Safari/537.36 EasyLiveLotWatcherCloud/1.0"
-      });
-      page.setDefaultNavigationTimeout(this.navigationTimeoutMs);
-      page.setDefaultTimeout(Math.min(this.navigationTimeoutMs, 20000));
-      this.pages.set(key, page);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let page = this.pages.get(key);
+      if (!page || page.isClosed()) page = await this.createPage(key);
+      const current = new URL(page.url());
+      const target = new URL(url);
+      if (page.url() !== "about:blank" && current.origin === target.origin && current.pathname.startsWith(target.pathname)) {
+        return page;
+      }
+      try {
+        await page.goto(url, { waitUntil: "domcontentloaded" });
+        return page;
+      } catch (error) {
+        if (attempt > 0 || !this.retryableNavigationError(error)) throw error;
+        this.pages.delete(key);
+        await page.close().catch(() => null);
+      }
     }
-    const current = new URL(page.url());
-    const target = new URL(url);
-    if (page.url() === "about:blank" || current.origin !== target.origin || !current.pathname.startsWith(target.pathname)) {
-      await page.goto(url, { waitUntil: "domcontentloaded" });
-    }
-    return page;
+    throw new Error(`Unable to open auction page: ${url}`);
   }
 
   async closeAuction(key) {

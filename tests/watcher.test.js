@@ -30,9 +30,11 @@ test("a stalled auction page is reset without blocking the watcher loop", async 
 
   assert.equal(f.watcher.running, false);
   assert.equal(f.watcher.lastLoopCompletedAt, 1_000_000);
-  assert.match(f.state.runtime.stalled.error, /timed out after 1 second/i);
+  assert.equal(f.state.runtime.stalled.error, "");
+  assert.match(f.state.runtime.stalled.transientError, /timed out after 1 second/i);
   assert.deepEqual(f.closed, ["stalled", "stalled:catalogue", "stalled:live"]);
-  assert.equal(f.state.incidents.stalled.notificationCount, 1);
+  assert.equal(f.state.incidents.stalled.notificationCount, 0);
+  assert.equal(f.sent.length, 0);
 });
 
 test("a crashed auction page is discarded and the next check can recover", async () => {
@@ -50,7 +52,8 @@ test("a crashed auction page is discarded and the next check can recover", async
   };
 
   await f.watcher.run();
-  assert.match(f.state.runtime.crashed.error, /Target crashed/);
+  assert.equal(f.state.runtime.crashed.error, "");
+  assert.match(f.state.runtime.crashed.transientError, /Target crashed/);
   assert.deepEqual(f.closed, ["crashed", "crashed:catalogue", "crashed:live"]);
 
   f.setNow(1_030_000);
@@ -111,9 +114,12 @@ test("connection incident sends initial and ten-minute reminder only", async () 
   const f = fixture();
   const auction = { auctionKey: "a", mode: "timed", label: "Sale", url: "https://example" };
   await f.watcher.handleFailure(auction, new Error("offline"));
+  assert.equal(f.sent.length, 0);
+  f.setNow(1_030_000);
+  await f.watcher.handleFailure(auction, new Error("offline"));
   f.setNow(1_300_000);
   await f.watcher.handleFailure(auction, new Error("offline"));
-  f.setNow(1_600_001);
+  f.setNow(1_630_001);
   await f.watcher.handleFailure(auction, new Error("offline"));
   f.setNow(3_000_000);
   await f.watcher.handleFailure(auction, new Error("offline"));
@@ -121,9 +127,21 @@ test("connection incident sends initial and ten-minute reminder only", async () 
   assert.equal(f.state.incidents.a.notificationCount, 2);
 });
 
+test("a single transient failure recovers without surfacing an incident", async () => {
+  const f = fixture();
+  const auction = { auctionKey: "a", mode: "timed", label: "Sale", url: "https://example" };
+  await f.watcher.handleFailure(auction, new Error("temporary timeout"));
+  await f.watcher.recoverIncident(f.state, auction);
+  assert.equal(f.sent.length, 0);
+  assert.equal(f.state.runtime.a.error, "");
+  assert.equal(f.state.incidents.a.recoveredAt, 1_000_000);
+  assert.equal(f.state.events.some((event) => event.type === "monitoring-retry-recovered"), true);
+});
+
 test("brief recovery does not reset the incident notification limit", async () => {
   const f = fixture();
   const auction = { auctionKey: "a", mode: "timed", label: "Sale", url: "https://example" };
+  await f.watcher.handleFailure(auction, new Error("offline"));
   await f.watcher.handleFailure(auction, new Error("offline"));
   f.setNow(1_100_000);
   await f.watcher.recoverIncident(f.state, auction);
@@ -136,11 +154,13 @@ test("incident resets after ten healthy minutes", async () => {
   const f = fixture();
   const auction = { auctionKey: "a", mode: "timed", label: "Sale", url: "https://example" };
   await f.watcher.handleFailure(auction, new Error("offline"));
+  await f.watcher.handleFailure(auction, new Error("offline"));
   f.setNow(1_100_000);
   await f.watcher.recoverIncident(f.state, auction);
   f.setNow(1_700_001);
   await f.watcher.recoverIncident(f.state, auction);
   f.setNow(1_800_000);
+  await f.watcher.handleFailure(auction, new Error("offline again"));
   await f.watcher.handleFailure(auction, new Error("offline again"));
   assert.equal(f.sent.length, 2);
 });

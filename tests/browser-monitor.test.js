@@ -21,6 +21,48 @@ function response({ url, body, ok = true, status = 200 }) {
   };
 }
 
+test("auction navigation blocks heavy resources and retries once with a clean page", async () => {
+  const monitor = new BrowserMonitor({ navigationTimeoutMs: 45_000 });
+  const routeHandlers = [];
+  let created = 0;
+  let firstClosed = false;
+  const pages = [
+    {
+      url: () => "about:blank",
+      isClosed: () => false,
+      setDefaultNavigationTimeout() {},
+      setDefaultTimeout() {},
+      async route(_pattern, handler) { routeHandlers.push(handler); },
+      async goto() { throw new Error("page.goto: Timeout 45000ms exceeded"); },
+      async close() { firstClosed = true; }
+    },
+    {
+      url: () => "about:blank",
+      isClosed: () => false,
+      setDefaultNavigationTimeout() {},
+      setDefaultTimeout() {},
+      async route(_pattern, handler) { routeHandlers.push(handler); },
+      async goto() {},
+      async close() {}
+    }
+  ];
+  monitor.start = async () => {};
+  monitor.browser = { async newPage() { return pages[created++]; } };
+
+  const page = await monitor.pageFor("sale", "https://example.com/catalogue/SALE/DAY/test/");
+
+  assert.equal(page, pages[1]);
+  assert.equal(created, 2);
+  assert.equal(firstClosed, true);
+  let aborted = false;
+  await routeHandlers[1]({
+    request: () => ({ resourceType: () => "image" }),
+    abort: async () => { aborted = true; },
+    continue: async () => {}
+  });
+  assert.equal(aborted, true);
+});
+
 test("static timed lookup repairs a mismatched saved lot URL and reads explicit ended state", async () => {
   const monitor = new BrowserMonitor();
   const catalogueUrl = "https://www.easyliveauction.com/catalogue/AUCTION/DAY/sale/";

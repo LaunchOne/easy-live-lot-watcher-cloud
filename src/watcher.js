@@ -2,6 +2,7 @@ import { dueStage, liveDistance } from "./easy-live.js";
 
 const TEN_MINUTES = 10 * 60 * 1000;
 const POST_START_FEED_GRACE_MS = 10 * 60 * 1000;
+const FAILURE_CONFIRMATION_COUNT = 2;
 
 function alertKey(auctionKey, lot, stage) {
   return `${auctionKey}::${lot}::${Number(stage)}`;
@@ -338,20 +339,31 @@ export class Watcher {
     await this.store.mutate(async (state) => {
       const now = this.now();
       const runtime = state.runtime[auction.auctionKey] || {};
-      state.runtime[auction.auctionKey] = { ...runtime, lastCheckedAt: now, error: error.message || String(error), monitoringComplete: false };
       const incident = state.incidents[auction.auctionKey];
       const sameIncident = Boolean(incident && !incident.recoveredAt);
       const firstSeen = sameIncident ? incident.firstSeen : now;
+      const failureCount = sameIncident ? Number(incident.failureCount || 0) + 1 : 1;
       const notificationCount = sameIncident ? Number(incident.notificationCount || 0) : 0;
       const lastNotifiedAt = sameIncident ? Number(incident.lastNotifiedAt || 0) : 0;
+      const confirmed = failureCount >= FAILURE_CONFIRMATION_COUNT;
       const reminderDue = notificationCount === 1 && now - lastNotifiedAt >= TEN_MINUTES;
-      const shouldNotify = notificationCount === 0 || reminderDue;
+      const shouldNotify = confirmed && (notificationCount === 0 || reminderDue);
+      const problem = error.message || String(error);
+      state.runtime[auction.auctionKey] = {
+        ...runtime,
+        lastCheckedAt: now,
+        error: confirmed ? problem : "",
+        transientError: confirmed ? "" : problem,
+        consecutiveFailures: failureCount,
+        monitoringComplete: false
+      };
       state.incidents[auction.auctionKey] = {
         firstSeen,
+        failureCount,
         lastFailureAt: now,
         lastNotifiedAt: shouldNotify ? now : lastNotifiedAt,
         notificationCount: shouldNotify ? Math.min(2, notificationCount + 1) : notificationCount,
-        problem: error.message || String(error),
+        problem,
         healthySince: null,
         recoveredAt: null
       };
@@ -359,14 +371,19 @@ export class Watcher {
         try {
           await this.pushover.send({
             title: notificationCount === 0 ? "Auction monitoring needs attention" : "Auction monitoring still needs attention",
-            message: `${auction.label}\n${error.message || String(error)}${notificationCount === 0 ? " Alerts may be delayed." : " Monitoring has been unavailable for at least 10 minutes."}`,
+            message: `${auction.label}\n${problem}${notificationCount === 0 ? " Alerts may be delayed." : " Monitoring has been unavailable for at least 10 minutes."}`,
             url: auction.url
           });
         } catch (pushError) {
           this.store.event("health-alert-failed", { auctionKey: auction.auctionKey, error: pushError.message }, "error");
         }
       }
-      this.store.event("monitoring-failed", { auctionKey: auction.auctionKey, error: error.message || String(error), notificationCount: state.incidents[auction.auctionKey].notificationCount }, "warning");
+      this.store.event(confirmed ? "monitoring-failed" : "monitoring-retry", {
+        auctionKey: auction.auctionKey,
+        error: problem,
+        failureCount,
+        notificationCount: state.incidents[auction.auctionKey].notificationCount
+      }, confirmed ? "warning" : "info");
     });
   }
 
@@ -374,6 +391,12 @@ export class Watcher {
     const incident = state.incidents[auction.auctionKey];
     if (!incident || incident.recoveredAt) return;
     const now = this.now();
+    if (Number(incident.notificationCount || 0) === 0) {
+      incident.recoveredAt = now;
+      incident.healthySince = now;
+      this.store.event("monitoring-retry-recovered", { auctionKey: auction.auctionKey, failures: incident.failureCount || 1 });
+      return;
+    }
     if (!incident.healthySince) {
       incident.healthySince = now;
       return;
